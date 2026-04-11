@@ -187,7 +187,7 @@ func (m Model) viewSide(apps []collector.AppStat, width int) string {
 
 	// System info
 	sys := m.snap.System
-	b.WriteString(sectionDiv("System", width))
+	b.WriteString(sectionDivStyle.Width(width).Render("System"))
 	b.WriteByte('\n')
 
 	usedGB := float64(sys.MemUsedKB) / 1048576
@@ -222,7 +222,7 @@ func (m Model) viewSide(apps []collector.AppStat, width int) string {
 
 	// OOM targets
 	if len(m.snap.OOM) > 0 {
-		b.WriteString(sectionDiv("OOM Top", width))
+		b.WriteString(sectionDivStyle.Width(width).Render("OOM Top"))
 		b.WriteByte('\n')
 
 		for i, o := range m.snap.OOM {
@@ -240,7 +240,7 @@ func (m Model) viewSide(apps []collector.AppStat, width int) string {
 
 	// Rescue command
 	if len(apps) > 0 {
-		b.WriteString(sectionDiv("Rescue", width))
+		b.WriteString(sectionDivStyle.Width(width).Render("Rescue"))
 		b.WriteByte('\n')
 		top := m.snap.Apps[0] // always the highest RSS, regardless of sort/filter
 		b.WriteString(warnStyle.Render(fmt.Sprintf("  pkill -x -- %s", top.Name)))
@@ -325,12 +325,6 @@ func (m Model) viewHelpModal() string {
 }
 
 // --- helpers ---
-
-func sectionDiv(title string, width int) string {
-	label := sectionStyle.Render(" " + title + " ")
-	fill := max(width-lipgloss.Width(label)-1, 0)
-	return sectionStyle.Render("─") + label + sectionStyle.Render(strings.Repeat("─", fill))
-}
 
 func fmtDelta(prefix string, kb int64) string {
 	mb := kb / 1024

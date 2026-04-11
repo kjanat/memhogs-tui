@@ -28,6 +28,13 @@ var (
 			Bold(true).
 			Foreground(colorMuted)
 
+	sectionDivStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorAccent).
+			BorderBottom(true).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(colorSubtle)
+
 	selectedStyle = lipgloss.NewStyle().
 			Bold(true).
 			Background(lipgloss.Color("#1a1a2e"))
