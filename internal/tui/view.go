@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	lgtable "charm.land/lipgloss/v2/table"
 
 	"github.com/kjanat/memhogs-tui/internal/collector"
 )
@@ -158,101 +159,152 @@ func (m Model) viewTable(apps []collector.AppStat, w, h int) string {
 // --- sidebar ---
 
 func (m Model) viewSide(apps []collector.AppStat, width int) string {
-	var b strings.Builder
+	sections := make([]string, 0, 6)
 
-	// Selected app detail
 	if m.cursor < len(apps) {
-		a := apps[m.cursor]
-		b.WriteString(titleStyle.Render("▸ " + a.Name))
-		b.WriteByte('\n')
-		b.WriteString(fmt.Sprintf("  RSS   %5d MB\n", a.RSSKB/1024))
-		b.WriteString(fmt.Sprintf("  Swap  %5d MB\n", a.SwapKB/1024))
-		b.WriteString(fmt.Sprintf("  Procs %5d\n", a.ProcCount))
-		b.WriteString(fmt.Sprintf("  Mem%%  %5.1f%%\n", a.MemPct))
+		sections = append(sections, m.viewDetail(apps[m.cursor], width))
+	}
 
-		if m.prevSnap != nil {
-			dRSS, dSwap := m.delta(a.Name)
-			if dRSS != 0 {
-				b.WriteString(fmtDelta("  Δ RSS ", dRSS))
-				b.WriteByte('\n')
-			}
-			if dSwap != 0 {
-				b.WriteString(fmtDelta("  Δ Swap", dSwap))
-				b.WriteByte('\n')
-			}
+	sections = append(sections, m.viewSystem(width))
+
+	if oom := m.viewOOM(width); oom != "" {
+		sections = append(sections, oom)
+	}
+
+	if rescue := m.viewRescue(width); rescue != "" {
+		sections = append(sections, rescue)
+	}
+
+	sections = append(sections, viewKeyHints(width))
+
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+func (m Model) viewDetail(a collector.AppStat, width int) string {
+	rows := []string{
+		titleStyle.Width(width).Render("▸ " + a.Name),
+		kvRow("RSS", fmt.Sprintf("%d MB", a.RSSKB/1024), width),
+		kvRow("Swap", fmt.Sprintf("%d MB", a.SwapKB/1024), width),
+		kvRow("Procs", fmt.Sprintf("%d", a.ProcCount), width),
+		kvRow("Mem%", fmt.Sprintf("%.1f%%", a.MemPct), width),
+	}
+
+	if m.prevSnap != nil {
+		dRSS, dSwap := m.delta(a.Name)
+		if dRSS != 0 {
+			rows = append(rows, fmtDelta("Δ RSS", dRSS, width))
+		}
+		if dSwap != 0 {
+			rows = append(rows, fmtDelta("Δ Swap", dSwap, width))
 		}
 	}
 
-	b.WriteByte('\n')
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
 
-	// System info
+func (m Model) viewSystem(width int) string {
 	sys := m.snap.System
-	b.WriteString(sectionDivStyle.Width(width).Render("System"))
-	b.WriteByte('\n')
+
+	rows := []string{
+		sectionDivStyle.Width(width).Render("System"),
+	}
 
 	usedGB := float64(sys.MemUsedKB) / 1048576
 	totalGB := float64(sys.MemTotalKB) / 1048576
 	availGB := float64(sys.MemAvailableKB) / 1048576
-	b.WriteString(sysRow("RAM", fmt.Sprintf("%4.1f / %4.1f GB", usedGB, totalGB)))
-	b.WriteString(sysDetail(fmt.Sprintf("%4.1f GB avail", availGB)))
+	rows = append(rows,
+		kvRow("RAM", fmt.Sprintf("%.1f / %.1f GB", usedGB, totalGB), width),
+		kvDetail(fmt.Sprintf("%.1f GB avail", availGB), width),
+	)
 
 	swUsedGB := float64(sys.SwapUsedKB) / 1048576
 	swTotalGB := float64(sys.SwapTotalKB) / 1048576
 	swFreeGB := float64(sys.SwapFreeKB) / 1048576
-	b.WriteString(sysRow("Swap", fmt.Sprintf("%4.1f / %4.1f GB", swUsedGB, swTotalGB)))
-	b.WriteString(sysDetail(fmt.Sprintf("%4.1f GB free", swFreeGB)))
+	rows = append(rows,
+		kvRow("Swap", fmt.Sprintf("%.1f / %.1f GB", swUsedGB, swTotalGB), width),
+		kvDetail(fmt.Sprintf("%.1f GB free", swFreeGB), width),
+	)
 
 	if sys.ZswapPoolKB > 0 {
 		poolGB := float64(sys.ZswapPoolKB) / 1048576
 		dataGB := float64(sys.ZswapDataKB) / 1048576
 		ratio := float64(sys.ZswapDataKB) / float64(sys.ZswapPoolKB)
-		b.WriteString(sysRow("Zswp", fmt.Sprintf("%4.1f / %4.1f GB", poolGB, dataGB)))
-		b.WriteString(sysDetail(fmt.Sprintf("%.1fx ratio", ratio)))
+		rows = append(rows,
+			kvRow("Zswp", fmt.Sprintf("%.1f / %.1f GB", poolGB, dataGB), width),
+			kvDetail(fmt.Sprintf("%.1fx ratio", ratio), width),
+		)
 	}
 
 	if psi := m.snap.PSI; psi != nil {
-		b.WriteString(sysRow("PSI", fmt.Sprintf("some %5.2f %5.2f %5.2f", psi.SomeAvg10, psi.SomeAvg60, psi.SomeAvg300)))
-		b.WriteString("  " + dimStyle.Render(fmt.Sprintf("     full %5.2f %5.2f %5.2f", psi.FullAvg10, psi.FullAvg60, psi.FullAvg300)) + "\n")
+		rows = append(rows,
+			kvRow("PSI", fmt.Sprintf("some %.2f %.2f %.2f", psi.SomeAvg10, psi.SomeAvg60, psi.SomeAvg300), width),
+			kvDetail(fmt.Sprintf("full %.2f %.2f %.2f", psi.FullAvg10, psi.FullAvg60, psi.FullAvg300), width),
+		)
 	}
 
-	b.WriteByte('\n')
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
 
-	// OOM targets
-	if len(m.snap.OOM) > 0 {
-		b.WriteString(sectionDivStyle.Width(width).Render("OOM Top"))
-		b.WriteByte('\n')
+func (m Model) viewOOM(width int) string {
+	if len(m.snap.OOM) == 0 {
+		return ""
+	}
 
-		for i, o := range m.snap.OOM {
-			if i >= 5 {
-				break
+	t := lgtable.New().
+		Headers("SCORE", "NAME", "RSS").
+		Border(lipgloss.NormalBorder()).
+		BorderTop(false).
+		BorderBottom(false).
+		BorderLeft(false).
+		BorderRight(false).
+		BorderHeader(true).
+		BorderColumn(false).
+		BorderRow(false).
+		BorderStyle(lipgloss.NewStyle().Foreground(colorSubtle)).
+		Width(width).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			s := lipgloss.NewStyle().PaddingRight(1)
+			if row == lgtable.HeaderRow {
+				return s.Bold(true).Foreground(colorAccent)
 			}
-			name := o.Name
-			maxName := max(width-16, 8)
-			if len(name) > maxName {
-				name = name[:maxName-1] + "…"
+			if col == 0 && row < len(m.snap.OOM) {
+				c := colorForPct(float64(m.snap.OOM[row].Score) / 10)
+				return s.Foreground(c)
 			}
-			scoreColor := colorForPct(float64(o.Score) / 10)
-			score := lipgloss.NewStyle().Foreground(scoreColor).Render(fmt.Sprintf("%4d", o.Score))
-			b.WriteString(fmt.Sprintf("  %s  %-*s %4dMB\n", score, maxName, name, o.RSSKB/1024))
-		}
-		b.WriteByte('\n')
+			return s
+		})
+
+	limit := min(len(m.snap.OOM), 5)
+	for i := range limit {
+		o := m.snap.OOM[i]
+		t = t.Row(
+			fmt.Sprintf("%d", o.Score),
+			o.Name,
+			fmt.Sprintf("%d MB", o.RSSKB/1024),
+		)
 	}
 
-	// Rescue command
-	if len(apps) > 0 {
-		b.WriteString(sectionDivStyle.Width(width).Render("Rescue"))
-		b.WriteByte('\n')
-		top := m.snap.Apps[0] // always the highest RSS, regardless of sort/filter
-		b.WriteString(warnStyle.Render(fmt.Sprintf("  pkill -x -- %s", top.Name)))
-		b.WriteString("\n\n")
+	header := sectionDivStyle.Width(width).Render("OOM Top")
+	return lipgloss.JoinVertical(lipgloss.Left, header, t.Render())
+}
+
+func (m Model) viewRescue(width int) string {
+	if m.snap == nil || len(m.snap.Apps) == 0 {
+		return ""
 	}
+	header := sectionDivStyle.Width(width).Render("Rescue")
+	top := m.snap.Apps[0]
+	cmd := warnStyle.PaddingLeft(2).Width(width).Render(
+		fmt.Sprintf("pkill -x -- %s", top.Name),
+	)
+	return lipgloss.JoinVertical(lipgloss.Left, header, cmd)
+}
 
-	// Key hints
-	b.WriteString(dimStyle.Render("↑↓ nav  s sort  / filter"))
-	b.WriteByte('\n')
-	b.WriteString(dimStyle.Render("x kill  p pause  ? help"))
-
-	return b.String()
+func viewKeyHints(width int) string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		dimStyle.Width(width).Render("↑↓ nav  s sort  / filter"),
+		dimStyle.Width(width).Render("x kill  p pause  ? help"),
+	)
 }
 
 // --- status bar ---
@@ -326,18 +378,27 @@ func (m Model) viewHelpModal() string {
 
 // --- helpers ---
 
-func sysRow(label, value string) string {
-	return "  " + labelStyle.Render(fmt.Sprintf("%-4s", label)) + " " + valueStyle.Render(value) + "\n"
+const kvLabelW = 6
+
+func kvRow(label, value string, width int) string {
+	l := labelStyle.Width(kvLabelW).Render(label)
+	v := valueStyle.Width(max(width-kvLabelW-2, 1)).Render(value)
+	return "  " + l + v
 }
 
-func sysDetail(detail string) string {
-	return "  " + dimStyle.Render("     "+detail) + "\n"
+func kvDetail(detail string, width int) string {
+	return dimStyle.Width(width).PaddingLeft(2 + kvLabelW).Render(detail)
 }
 
-func fmtDelta(prefix string, kb int64) string {
+func fmtDelta(label string, kb int64, width int) string {
 	mb := kb / 1024
+	style := deltaDownStyle
+	text := fmt.Sprintf("%d MB", mb)
 	if mb > 0 {
-		return deltaUpStyle.Render(fmt.Sprintf("%s +%dMB", prefix, mb))
+		style = deltaUpStyle
+		text = fmt.Sprintf("+%d MB", mb)
 	}
-	return deltaDownStyle.Render(fmt.Sprintf("%s %dMB", prefix, mb))
+	l := style.Width(kvLabelW).Render(label)
+	v := style.Width(max(width-kvLabelW-2, 1)).Render(text)
+	return "  " + l + v
 }
