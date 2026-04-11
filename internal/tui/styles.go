@@ -68,6 +68,13 @@ var (
 			Bold(true).
 			Foreground(colorAccent)
 
+	labelStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorAccent)
+
+	valueStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#cccccc"))
+
 	warnStyle = lipgloss.NewStyle().
 			Foreground(colorWarning)
 

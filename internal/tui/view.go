@@ -193,29 +193,26 @@ func (m Model) viewSide(apps []collector.AppStat, width int) string {
 	usedGB := float64(sys.MemUsedKB) / 1048576
 	totalGB := float64(sys.MemTotalKB) / 1048576
 	availGB := float64(sys.MemAvailableKB) / 1048576
-	b.WriteString(fmt.Sprintf("  RAM  %4.1f/%4.1f GB\n", usedGB, totalGB))
-	b.WriteString(dimStyle.Render(fmt.Sprintf("       %4.1f GB avail", availGB)))
-	b.WriteByte('\n')
+	b.WriteString(sysRow("RAM", fmt.Sprintf("%4.1f / %4.1f GB", usedGB, totalGB)))
+	b.WriteString(sysDetail(fmt.Sprintf("%4.1f GB avail", availGB)))
 
 	swUsedGB := float64(sys.SwapUsedKB) / 1048576
 	swTotalGB := float64(sys.SwapTotalKB) / 1048576
 	swFreeGB := float64(sys.SwapFreeKB) / 1048576
-	b.WriteString(fmt.Sprintf("  Swap %4.1f/%4.1f GB\n", swUsedGB, swTotalGB))
-	b.WriteString(dimStyle.Render(fmt.Sprintf("       %4.1f GB free", swFreeGB)))
-	b.WriteByte('\n')
+	b.WriteString(sysRow("Swap", fmt.Sprintf("%4.1f / %4.1f GB", swUsedGB, swTotalGB)))
+	b.WriteString(sysDetail(fmt.Sprintf("%4.1f GB free", swFreeGB)))
 
 	if sys.ZswapPoolKB > 0 {
 		poolGB := float64(sys.ZswapPoolKB) / 1048576
 		dataGB := float64(sys.ZswapDataKB) / 1048576
 		ratio := float64(sys.ZswapDataKB) / float64(sys.ZswapPoolKB)
-		b.WriteString(fmt.Sprintf("  Zswp %4.1f/%4.1f GB\n", poolGB, dataGB))
-		b.WriteString(dimStyle.Render(fmt.Sprintf("       %.1fx ratio", ratio)))
-		b.WriteByte('\n')
+		b.WriteString(sysRow("Zswp", fmt.Sprintf("%4.1f / %4.1f GB", poolGB, dataGB)))
+		b.WriteString(sysDetail(fmt.Sprintf("%.1fx ratio", ratio)))
 	}
 
 	if psi := m.snap.PSI; psi != nil {
-		b.WriteString(fmt.Sprintf("  PSI some %5.2f %5.2f %5.2f\n", psi.SomeAvg10, psi.SomeAvg60, psi.SomeAvg300))
-		b.WriteString(fmt.Sprintf("  PSI full %5.2f %5.2f %5.2f\n", psi.FullAvg10, psi.FullAvg60, psi.FullAvg300))
+		b.WriteString(sysRow("PSI", fmt.Sprintf("some %5.2f %5.2f %5.2f", psi.SomeAvg10, psi.SomeAvg60, psi.SomeAvg300)))
+		b.WriteString("  " + dimStyle.Render(fmt.Sprintf("     full %5.2f %5.2f %5.2f", psi.FullAvg10, psi.FullAvg60, psi.FullAvg300)) + "\n")
 	}
 
 	b.WriteByte('\n')
@@ -230,10 +227,13 @@ func (m Model) viewSide(apps []collector.AppStat, width int) string {
 				break
 			}
 			name := o.Name
-			if len(name) > 14 {
-				name = name[:13] + "…"
+			maxName := max(width-16, 8)
+			if len(name) > maxName {
+				name = name[:maxName-1] + "…"
 			}
-			b.WriteString(fmt.Sprintf("  %4d %-14s %4dMB\n", o.Score, name, o.RSSKB/1024))
+			scoreColor := colorForPct(float64(o.Score) / 10)
+			score := lipgloss.NewStyle().Foreground(scoreColor).Render(fmt.Sprintf("%4d", o.Score))
+			b.WriteString(fmt.Sprintf("  %s  %-*s %4dMB\n", score, maxName, name, o.RSSKB/1024))
 		}
 		b.WriteByte('\n')
 	}
@@ -325,6 +325,14 @@ func (m Model) viewHelpModal() string {
 }
 
 // --- helpers ---
+
+func sysRow(label, value string) string {
+	return "  " + labelStyle.Render(fmt.Sprintf("%-4s", label)) + " " + valueStyle.Render(value) + "\n"
+}
+
+func sysDetail(detail string) string {
+	return "  " + dimStyle.Render("     "+detail) + "\n"
+}
 
 func fmtDelta(prefix string, kb int64) string {
 	mb := kb / 1024
