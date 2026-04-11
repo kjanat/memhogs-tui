@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/kjanat/memhogs-tui/internal/collector"
 )
@@ -152,7 +152,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, doClearStatus()
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 
@@ -161,7 +161,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // --- key handlers ---
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.filtering {
 		return m.handleFilterKey(msg)
 	}
@@ -171,14 +171,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.handleNormalKey(msg)
 }
 
-func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleFilterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.Cancel):
 		m.filtering = false
 		m.filter = ""
 		m.input.Reset()
 		return m, nil
-	case msg.Type == tea.KeyEnter:
+	case msg.String() == "enter":
 		m.filtering = false
 		m.filter = m.input.Value()
 		m.cursor = 0
@@ -192,7 +192,7 @@ func (m Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m Model) handleKillKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKillKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.Confirm):
 		m.killConfirm = false
@@ -206,7 +206,7 @@ func (m Model) handleKillKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.Quit):
 		return m, tea.Quit

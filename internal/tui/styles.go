@@ -1,12 +1,16 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+)
 
 var (
-	colorSubtle = lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#444444"}
-	colorAccent = lipgloss.AdaptiveColor{Light: "#874BFD", Dark: "#7D56F4"}
-	colorMuted  = lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"}
-	colorDim    = lipgloss.AdaptiveColor{Light: "#BBBBBB", Dark: "#444444"}
+	colorSubtle = lipgloss.Color("#444444")
+	colorAccent = lipgloss.Color("#7D56F4")
+	colorMuted  = lipgloss.Color("#666666")
+	colorDim    = lipgloss.Color("#444444")
 
 	colorSafe    = lipgloss.Color("#44CC44")
 	colorWarning = lipgloss.Color("#CCAA00")
@@ -56,9 +60,6 @@ var (
 			Bold(true).
 			Foreground(colorAccent)
 
-	helpDescStyle = lipgloss.NewStyle().
-			Foreground(colorMuted)
-
 	deltaUpStyle = lipgloss.NewStyle().
 			Foreground(colorDanger)
 
@@ -66,7 +67,7 @@ var (
 			Foreground(colorSafe)
 )
 
-func colorForPct(pct float64) lipgloss.TerminalColor {
+func colorForPct(pct float64) color.Color {
 	switch {
 	case pct > 10:
 		return colorDanger

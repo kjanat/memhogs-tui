@@ -4,15 +4,18 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/kjanat/memhogs-tui/internal/collector"
 )
 
 // View renders the full UI.
-func (m Model) View() string {
+func (m Model) View() tea.View {
 	if m.width == 0 || m.snap == nil {
-		return "  Collecting…"
+		v := tea.NewView("  Collecting…")
+		v.AltScreen = true
+		return v
 	}
 
 	apps := m.sortedApps()
@@ -35,7 +38,7 @@ func (m Model) View() string {
 
 	var body string
 	if hasSide {
-		side := m.viewSide(apps, sideW-2, mainH) // -2 for border+pad
+		side := m.viewSide(apps)
 		sidePane := sidebarStyle.Width(sideW).Height(mainH).Render(side)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, tablePane, sidePane)
 	} else {
@@ -55,7 +58,9 @@ func (m Model) View() string {
 		out = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
 	}
 
-	return out
+	v := tea.NewView(out)
+	v.AltScreen = true
+	return v
 }
 
 // --- app table ---
@@ -70,10 +75,7 @@ func (m Model) viewTable(apps []collector.AppStat, w, h int) string {
 
 	// prefix(2) + name + rss(8) + swap(8) + procs(6) + pct(7) + gap(1)
 	fixed := 2 + 8 + 8 + 6 + 7 + 1
-	barW := w - nameW - fixed
-	if barW < 0 {
-		barW = 0
-	}
+	barW := max(w-nameW-fixed, 0)
 
 	var maxRSS int64
 	for _, a := range apps {
@@ -103,10 +105,7 @@ func (m Model) viewTable(apps []collector.AppStat, w, h int) string {
 	b.WriteString(mutedStyle.Render(strings.Repeat("─", w)))
 	b.WriteByte('\n')
 
-	maxRows := h - 3
-	if maxRows < 0 {
-		maxRows = 0
-	}
+	maxRows := max(h-3, 0)
 
 	for i, a := range apps {
 		if i >= maxRows {
@@ -156,7 +155,7 @@ func (m Model) viewTable(apps []collector.AppStat, w, h int) string {
 
 // --- sidebar ---
 
-func (m Model) viewSide(apps []collector.AppStat, w, h int) string {
+func (m Model) viewSide(apps []collector.AppStat) string {
 	var b strings.Builder
 
 	// Selected app detail
@@ -266,10 +265,7 @@ func (m Model) viewStatus(w int) string {
 
 	leftW := lipgloss.Width(left)
 	rightW := lipgloss.Width(right)
-	gap := w - leftW - rightW
-	if gap < 0 {
-		gap = 0
-	}
+	gap := max(w-leftW-rightW, 0)
 
 	return statusStyle.Render(left + strings.Repeat(" ", gap) + right)
 }

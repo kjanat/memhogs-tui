@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/kjanat/memhogs-tui/internal/tui"
 )
@@ -39,7 +39,7 @@ func main() {
 		Interval: time.Duration(*interval) * time.Second,
 	})
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "memhogs: %v\n", err)
 		os.Exit(1)
