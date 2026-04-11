@@ -29,7 +29,8 @@ var (
 			Foreground(colorMuted)
 
 	selectedStyle = lipgloss.NewStyle().
-			Bold(true)
+			Bold(true).
+			Background(lipgloss.Color("#1a1a2e"))
 
 	dimStyle = lipgloss.NewStyle().
 			Foreground(colorDim)
@@ -59,6 +60,9 @@ var (
 	helpKeyStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(colorAccent)
+
+	warnStyle = lipgloss.NewStyle().
+			Foreground(colorWarning)
 
 	deltaUpStyle = lipgloss.NewStyle().
 			Foreground(colorDanger)

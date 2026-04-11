@@ -38,12 +38,12 @@ var keys = keyMap{
 		key.WithHelp("p", "pause"),
 	),
 	Kill: key.NewBinding(
-		key.WithKeys("d"),
-		key.WithHelp("d", "SIGTERM"),
+		key.WithKeys("x"),
+		key.WithHelp("x", "SIGTERM"),
 	),
 	ForceKill: key.NewBinding(
-		key.WithKeys("D"),
-		key.WithHelp("D", "SIGKILL"),
+		key.WithKeys("X"),
+		key.WithHelp("X", "SIGKILL"),
 	),
 	Help: key.NewBinding(
 		key.WithKeys("?"),

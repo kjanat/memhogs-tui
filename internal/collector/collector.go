@@ -185,15 +185,15 @@ func collectApps(totalKB int64) []AppStat {
 }
 
 // procName returns the display name for a process.
-// Uses /proc/<pid>/comm, falling back to /proc/<pid>/cmdline
-// when comm is kernel-truncated at 15 chars.
+// Prefers cmdline over comm when comm is kernel-truncated (>=15 chars)
+// or is a generic thread name that hides the real application.
 func procName(dir string) string {
 	raw, err := os.ReadFile(filepath.Join(dir, "comm"))
 	if err != nil {
 		return ""
 	}
 	comm := strings.TrimSpace(string(raw))
-	if len(comm) >= 15 {
+	if len(comm) >= 15 || genericComm(comm) {
 		if full := cmdlineName(dir); len(full) > len(comm) {
 			return full
 		}
@@ -201,17 +201,40 @@ func procName(dir string) string {
 	return comm
 }
 
+// genericComm returns true for thread names that hide the real application.
+func genericComm(name string) bool {
+	switch name {
+	case "MainThread", "Web Content", "WebExtensions",
+		"Isolated Web Co", "Socket Thread",
+		"StreamTrans", "Timer", "worker",
+		"pool-thread", "Thread", "main":
+		return true
+	}
+	return false
+}
+
 func cmdlineName(dir string) string {
 	data, err := os.ReadFile(filepath.Join(dir, "cmdline"))
 	if err != nil || len(data) == 0 {
 		return ""
 	}
-	if i := bytes.IndexByte(data, 0); i > 0 {
-		data = data[:i]
+	// Replace null separators with spaces, trim trailing
+	s := strings.TrimRight(string(bytes.ReplaceAll(data, []byte{0}, []byte{' '})), " ")
+	if s == "" {
+		return ""
 	}
-	s := string(data)
-	if i := strings.LastIndexByte(s, '/'); i >= 0 {
-		s = s[i+1:]
+	// Strip path from argv[0] only
+	if sp := strings.IndexByte(s, ' '); sp > 0 {
+		exe := s[:sp]
+		if sl := strings.LastIndexByte(exe, '/'); sl >= 0 {
+			s = exe[sl+1:] + s[sp:]
+		}
+	} else if sl := strings.LastIndexByte(s, '/'); sl >= 0 {
+		s = s[sl+1:]
+	}
+	// Squash home dir to ~
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		s = strings.ReplaceAll(s, home, "~")
 	}
 	return s
 }

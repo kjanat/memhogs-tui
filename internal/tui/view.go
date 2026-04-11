@@ -38,7 +38,7 @@ func (m Model) View() tea.View {
 
 	var body string
 	if hasSide {
-		side := m.viewSide(apps)
+		side := m.viewSide(apps, sideW-2)
 		sidePane := sidebarStyle.Width(sideW).Height(mainH).Render(side)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, tablePane, sidePane)
 	} else {
@@ -66,16 +66,18 @@ func (m Model) View() tea.View {
 // --- app table ---
 
 func (m Model) viewTable(apps []collector.AppStat, w, h int) string {
+	// prefix(2) + name + rss(8) + swap(8) + procs(6) + pct(7) + gap(1)
+	const fixed = 2 + 8 + 8 + 6 + 7 + 1
+
 	nameW := 16
 	for _, a := range apps {
-		if n := len(a.Name); n > nameW && n <= 24 {
+		if n := len(a.Name); n > nameW {
 			nameW = n
 		}
 	}
-
-	// prefix(2) + name + rss(8) + swap(8) + procs(6) + pct(7) + gap(1)
-	fixed := 2 + 8 + 8 + 6 + 7 + 1
+	nameW = min(nameW, max((w-fixed)/2, 16)) // names get at most half the data area
 	barW := max(w-nameW-fixed, 0)
+	barW = min(barW, w/3) // cap bars at ~33% of table width
 
 	var maxRSS int64
 	for _, a := range apps {
@@ -155,7 +157,7 @@ func (m Model) viewTable(apps []collector.AppStat, w, h int) string {
 
 // --- sidebar ---
 
-func (m Model) viewSide(apps []collector.AppStat) string {
+func (m Model) viewSide(apps []collector.AppStat, width int) string {
 	var b strings.Builder
 
 	// Selected app detail
@@ -185,7 +187,7 @@ func (m Model) viewSide(apps []collector.AppStat) string {
 
 	// System info
 	sys := m.snap.System
-	b.WriteString(sectionStyle.Render("── System ──"))
+	b.WriteString(sectionDiv("System", width))
 	b.WriteByte('\n')
 
 	usedGB := float64(sys.MemUsedKB) / 1048576
@@ -203,25 +205,24 @@ func (m Model) viewSide(apps []collector.AppStat) string {
 	b.WriteByte('\n')
 
 	if sys.ZswapPoolKB > 0 {
-		poolMB := sys.ZswapPoolKB / 1024
-		dataMB := sys.ZswapDataKB / 1024
-		ratio := 0.0
-		if sys.ZswapPoolKB > 0 {
-			ratio = float64(sys.ZswapDataKB) / float64(sys.ZswapPoolKB)
-		}
-		b.WriteString(fmt.Sprintf("  Zswap %d→%dMB %.1fx\n", poolMB, dataMB, ratio))
+		poolGB := float64(sys.ZswapPoolKB) / 1048576
+		dataGB := float64(sys.ZswapDataKB) / 1048576
+		ratio := float64(sys.ZswapDataKB) / float64(sys.ZswapPoolKB)
+		b.WriteString(fmt.Sprintf("  Zswp %4.1f/%4.1f GB\n", poolGB, dataGB))
+		b.WriteString(dimStyle.Render(fmt.Sprintf("       %.1fx ratio", ratio)))
+		b.WriteByte('\n')
 	}
 
 	if psi := m.snap.PSI; psi != nil {
-		b.WriteString(fmt.Sprintf("  PSI some %5.2f %5.2f\n", psi.SomeAvg10, psi.SomeAvg60))
-		b.WriteString(fmt.Sprintf("  PSI full %5.2f %5.2f\n", psi.FullAvg10, psi.FullAvg60))
+		b.WriteString(fmt.Sprintf("  PSI some %5.2f %5.2f %5.2f\n", psi.SomeAvg10, psi.SomeAvg60, psi.SomeAvg300))
+		b.WriteString(fmt.Sprintf("  PSI full %5.2f %5.2f %5.2f\n", psi.FullAvg10, psi.FullAvg60, psi.FullAvg300))
 	}
 
 	b.WriteByte('\n')
 
 	// OOM targets
 	if len(m.snap.OOM) > 0 {
-		b.WriteString(sectionStyle.Render("── OOM Top ──"))
+		b.WriteString(sectionDiv("OOM Top", width))
 		b.WriteByte('\n')
 
 		for i, o := range m.snap.OOM {
@@ -237,10 +238,19 @@ func (m Model) viewSide(apps []collector.AppStat) string {
 		b.WriteByte('\n')
 	}
 
+	// Rescue command
+	if len(apps) > 0 {
+		b.WriteString(sectionDiv("Rescue", width))
+		b.WriteByte('\n')
+		top := m.snap.Apps[0] // always the highest RSS, regardless of sort/filter
+		b.WriteString(warnStyle.Render(fmt.Sprintf("  pkill -x -- %s", top.Name)))
+		b.WriteString("\n\n")
+	}
+
 	// Key hints
 	b.WriteString(dimStyle.Render("↑↓ nav  s sort  / filter"))
 	b.WriteByte('\n')
-	b.WriteString(dimStyle.Render("d kill  p pause  ? help"))
+	b.WriteString(dimStyle.Render("x kill  p pause  ? help"))
 
 	return b.String()
 }
@@ -302,8 +312,8 @@ func (m Model) viewHelpModal() string {
 		"  " + helpKeyStyle.Render("↑/k") + "  Move up\n" +
 		"  " + helpKeyStyle.Render("↓/j") + "  Move down\n\n" +
 		sectionStyle.Render("Actions") + "\n" +
-		"  " + helpKeyStyle.Render("d") + "    Send SIGTERM to selected\n" +
-		"  " + helpKeyStyle.Render("D") + "    Send SIGKILL to selected\n\n" +
+		"  " + helpKeyStyle.Render("x") + "    Send SIGTERM to selected\n" +
+		"  " + helpKeyStyle.Render("X") + "    Send SIGKILL to selected\n\n" +
 		sectionStyle.Render("Display") + "\n" +
 		"  " + helpKeyStyle.Render("s") + "    Cycle sort mode\n" +
 		"  " + helpKeyStyle.Render("/") + "    Filter by name\n" +
@@ -315,6 +325,12 @@ func (m Model) viewHelpModal() string {
 }
 
 // --- helpers ---
+
+func sectionDiv(title string, width int) string {
+	label := sectionStyle.Render(" " + title + " ")
+	fill := max(width-lipgloss.Width(label)-1, 0)
+	return sectionStyle.Render("─") + label + sectionStyle.Render(strings.Repeat("─", fill))
+}
 
 func fmtDelta(prefix string, kb int64) string {
 	mb := kb / 1024
