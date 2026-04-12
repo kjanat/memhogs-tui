@@ -208,14 +208,17 @@ func (m Model) viewDetail(a collector.AppStat, width int) string {
 		kvRow("Mem%", fmt.Sprintf("%.1f%%", a.MemPct), width),
 	}
 
-	if m.prevSnap != nil {
-		dRSS, dSwap := m.delta(a.Name)
-		if dRSS != 0 {
-			rows = append(rows, fmtDelta("Δ RSS", dRSS, width))
-		}
-		if dSwap != 0 {
-			rows = append(rows, fmtDelta("Δ Swap", dSwap, width))
-		}
+	// Always reserve delta rows to prevent layout jitter
+	dRSS, dSwap := m.delta(a.Name)
+	if dRSS != 0 {
+		rows = append(rows, fmtDelta("Δ RSS", dRSS, width))
+	} else {
+		rows = append(rows, strings.Repeat(" ", width))
+	}
+	if dSwap != 0 {
+		rows = append(rows, fmtDelta("Δ Swap", dSwap, width))
+	} else {
+		rows = append(rows, strings.Repeat(" ", width))
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
