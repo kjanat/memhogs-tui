@@ -31,6 +31,15 @@ type AppStat struct {
 	SwapKB    int64
 	ProcCount int
 	MemPct    float64
+	Children  []ProcDetail
+}
+
+// ProcDetail is one individual process within a group.
+type ProcDetail struct {
+	PID     int
+	Cmdline string // full command for display
+	RSSKB   int64
+	SwapKB  int64
 }
 
 // SystemInfo holds system-wide memory from /proc/meminfo.
@@ -119,9 +128,10 @@ func readMemInfo() (SystemInfo, error) {
 // --- per-process aggregation ---
 
 type appGroup struct {
-	rssKB  int64
-	swapKB int64
-	count  int
+	rssKB    int64
+	swapKB   int64
+	count    int
+	children []ProcDetail
 }
 
 func collectApps(totalKB int64) []AppStat {
@@ -155,6 +165,14 @@ func collectApps(totalKB int64) []AppStat {
 		g.rssKB += rss
 		g.swapKB += swap
 		g.count++
+
+		pidNum, _ := strconv.Atoi(pid)
+		g.children = append(g.children, ProcDetail{
+			PID:     pidNum,
+			Cmdline: cmdlineDisplay(dir),
+			RSSKB:   rss,
+			SwapKB:  swap,
+		})
 	}
 
 	apps := make([]AppStat, 0, len(groups))
@@ -166,12 +184,17 @@ func collectApps(totalKB int64) []AppStat {
 		if totalKB > 0 {
 			pct = float64(g.rssKB) / float64(totalKB) * 100
 		}
+		// Sort children by RSS descending
+		slices.SortFunc(g.children, func(a, b ProcDetail) int {
+			return cmp.Compare(b.RSSKB, a.RSSKB)
+		})
 		apps = append(apps, AppStat{
 			Name:      name,
 			RSSKB:     g.rssKB,
 			SwapKB:    g.swapKB,
 			ProcCount: g.count,
 			MemPct:    pct,
+			Children:  g.children,
 		})
 	}
 
@@ -213,30 +236,63 @@ func genericComm(name string) bool {
 	return false
 }
 
+// cmdlineName returns a short group name: exe basename + first non-flag arg basename.
+// e.g. "node playwright-mcp", "chrome", "python3 myapp.py"
 func cmdlineName(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, "cmdline"))
-	if err != nil || len(data) == 0 {
+	args := splitCmdline(dir)
+	if len(args) == 0 {
 		return ""
 	}
-	// Replace null separators with spaces, trim trailing
-	s := strings.TrimRight(string(bytes.ReplaceAll(data, []byte{0}, []byte{' '})), " ")
-	if s == "" {
-		return ""
-	}
-	// Strip path from argv[0] only
-	if sp := strings.IndexByte(s, ' '); sp > 0 {
-		exe := s[:sp]
-		if sl := strings.LastIndexByte(exe, '/'); sl >= 0 {
-			s = exe[sl+1:] + s[sp:]
+	exe := basename(args[0])
+
+	// Find first non-flag argument, use its basename
+	for _, arg := range args[1:] {
+		if strings.HasPrefix(arg, "-") {
+			continue
 		}
-	} else if sl := strings.LastIndexByte(s, '/'); sl >= 0 {
-		s = s[sl+1:]
+		if sub := basename(arg); sub != "" {
+			return exe + " " + sub
+		}
 	}
-	// Squash home dir to ~
+	return exe
+}
+
+// cmdlineDisplay returns the full command for display when a group is expanded.
+// Strips path from argv[0], squashes home dir to ~.
+func cmdlineDisplay(dir string) string {
+	args := splitCmdline(dir)
+	if len(args) == 0 {
+		return ""
+	}
+	args[0] = basename(args[0])
+	s := strings.Join(args, " ")
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		s = strings.ReplaceAll(s, home, "~")
 	}
 	return s
+}
+
+func splitCmdline(dir string) []string {
+	data, err := os.ReadFile(filepath.Join(dir, "cmdline"))
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	data = bytes.TrimRight(data, "\x00")
+	parts := bytes.Split(data, []byte{0})
+	args := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := string(p); s != "" {
+			args = append(args, s)
+		}
+	}
+	return args
+}
+
+func basename(path string) string {
+	if i := strings.LastIndexByte(path, '/'); i >= 0 {
+		return path[i+1:]
+	}
+	return path
 }
 
 func procMem(dir string) (rss, swap int64) {

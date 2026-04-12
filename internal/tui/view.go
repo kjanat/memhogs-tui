@@ -20,6 +20,7 @@ func (m Model) View() tea.View {
 	}
 
 	apps := m.sortedApps()
+	rows := m.visibleRows(apps)
 
 	// Layout: sidebar appears at ≥90 cols
 	hasSide := m.width >= 90
@@ -34,12 +35,12 @@ func (m Model) View() tea.View {
 		tableW = m.width
 	}
 
-	table := m.viewTable(apps, tableW, mainH)
+	table := m.viewTable(rows, tableW, mainH)
 	tablePane := lipgloss.NewStyle().Width(tableW).Height(mainH).Render(table)
 
 	var body string
 	if hasSide {
-		side := m.viewSide(apps, sideW-2)
+		side := m.viewSide(rows, sideW-2)
 		sidePane := sidebarStyle.Width(sideW).Height(mainH).Render(side)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, tablePane, sidePane)
 	} else {
@@ -51,7 +52,7 @@ func (m Model) View() tea.View {
 
 	// Modal overlays replace the whole screen
 	if m.killConfirm {
-		modal := m.viewKillModal(apps)
+		modal := m.viewKillModal(rows)
 		out = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
 	}
 	if m.help {
@@ -66,24 +67,26 @@ func (m Model) View() tea.View {
 
 // --- app table ---
 
-func (m Model) viewTable(apps []collector.AppStat, w, h int) string {
+func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 	// prefix(2) + name + rss(8) + swap(8) + procs(6) + pct(7) + gap(1)
 	const fixed = 2 + 8 + 8 + 6 + 7 + 1
 
 	nameW := 16
-	for _, a := range apps {
-		if n := len(a.Name); n > nameW {
-			nameW = n
+	for _, r := range rows {
+		if r.Kind == RowGroup {
+			if n := len(r.App.Name); n > nameW {
+				nameW = n
+			}
 		}
 	}
-	nameW = min(nameW, max((w-fixed)/2, 16)) // names get at most half the data area
+	nameW = min(nameW, max((w-fixed)/2, 16))
 	barW := max(w-nameW-fixed, 0)
-	barW = min(barW, w/3) // cap bars at ~33% of table width
+	barW = min(barW, w/3)
 
 	var maxRSS int64
-	for _, a := range apps {
-		if a.RSSKB > maxRSS {
-			maxRSS = a.RSSKB
+	for _, r := range rows {
+		if r.Kind == RowGroup && r.App.RSSKB > maxRSS {
+			maxRSS = r.App.RSSKB
 		}
 	}
 
@@ -100,55 +103,71 @@ func (m Model) viewTable(apps []collector.AppStat, w, h int) string {
 	b.WriteString(titleStyle.Render(title))
 	b.WriteByte('\n')
 
-	// Header
 	hdr := fmt.Sprintf("  %-*s %7s %7s %5s %6s", nameW, "NAME", "RSS", "SWAP", "PROCS", "MEM%")
 	b.WriteString(headerStyle.Render(hdr))
 	b.WriteByte('\n')
-
 	b.WriteString(mutedStyle.Render(strings.Repeat("─", w)))
 	b.WriteByte('\n')
 
-	maxRows := max(h-3, 0)
+	maxVisible := max(h-3, 0)
 
-	for i, a := range apps {
-		if i >= maxRows {
+	for i, r := range rows {
+		if i >= maxVisible {
 			break
 		}
 
-		name := a.Name
-		if len(name) > nameW {
-			name = name[:nameW-1] + "…"
-		}
-
-		pfx := "  "
-		if i == m.cursor {
-			pfx = "▸ "
-		}
-
-		row := fmt.Sprintf("%s%-*s %5dMB %5dMB %5d %5.1f%%",
-			pfx, nameW, name,
-			a.RSSKB/1024, a.SwapKB/1024,
-			a.ProcCount, a.MemPct)
-
-		if barW > 0 && maxRSS > 0 {
-			bLen := int(float64(a.RSSKB) / float64(maxRSS) * float64(barW))
-			if a.RSSKB > 0 && bLen < 1 {
-				bLen = 1
+		switch r.Kind {
+		case RowGroup:
+			a := r.App
+			name := a.Name
+			if len(name) > nameW {
+				name = name[:nameW-1] + "…"
 			}
-			c := colorForPct(a.MemPct)
-			bar := lipgloss.NewStyle().Foreground(c).Render(strings.Repeat("█", bLen))
-			row += " " + bar
+
+			// Fold indicator
+			pfx := "▸ "
+			if m.expanded[a.Name] {
+				pfx = "▾ "
+			}
+
+			row := fmt.Sprintf("%s%-*s %5dMB %5dMB %5d %5.1f%%",
+				pfx, nameW, name,
+				a.RSSKB/1024, a.SwapKB/1024,
+				a.ProcCount, a.MemPct)
+
+			if barW > 0 && maxRSS > 0 {
+				bLen := int(float64(a.RSSKB) / float64(maxRSS) * float64(barW))
+				if a.RSSKB > 0 && bLen < 1 {
+					bLen = 1
+				}
+				c := colorForPct(a.MemPct)
+				bar := lipgloss.NewStyle().Foreground(c).Render(strings.Repeat("█", bLen))
+				row += " " + bar
+			}
+
+			if i == m.cursor {
+				row = selectedStyle.Render(row)
+			}
+			b.WriteString(row)
+
+		case RowChild:
+			c := r.Child
+			cmdW := max(w-12, 20) // full width minus RSS column
+			cmd := c.Cmdline
+			if len(cmd) > cmdW {
+				cmd = cmd[:cmdW-1] + "…"
+			}
+			row := dimStyle.Render(fmt.Sprintf("    %-*s %5dMB", cmdW, cmd, c.RSSKB/1024))
+			if i == m.cursor {
+				row = selectedStyle.Render(fmt.Sprintf("  ▸ %-*s %5dMB", cmdW, cmd, c.RSSKB/1024))
+			}
+			b.WriteString(row)
 		}
 
-		if i == m.cursor {
-			row = selectedStyle.Render(row)
-		}
-
-		b.WriteString(row)
 		b.WriteByte('\n')
 	}
 
-	if len(apps) == 0 {
+	if len(rows) == 0 {
 		b.WriteString(dimStyle.Render("  (no processes)"))
 		b.WriteByte('\n')
 	}
@@ -158,11 +177,11 @@ func (m Model) viewTable(apps []collector.AppStat, w, h int) string {
 
 // --- sidebar ---
 
-func (m Model) viewSide(apps []collector.AppStat, width int) string {
+func (m Model) viewSide(rows []VisibleRow, width int) string {
 	sections := make([]string, 0, 6)
 
-	if m.cursor < len(apps) {
-		sections = append(sections, m.viewDetail(apps[m.cursor], width))
+	if m.cursor < len(rows) {
+		sections = append(sections, m.viewDetail(rows[m.cursor].App, width))
 	}
 
 	sections = append(sections, m.viewSystem(width))
@@ -265,7 +284,7 @@ func (m Model) viewOOM(width int) string {
 		StyleFunc(func(row, col int) lipgloss.Style {
 			s := lipgloss.NewStyle().PaddingRight(1)
 			if row == lgtable.HeaderRow {
-				return s.Bold(true).Foreground(colorAccent)
+				return s.Foreground(colorMuted)
 			}
 			if col == 0 && row < len(m.snap.OOM) {
 				c := colorForPct(float64(m.snap.OOM[row].Score) / 10)
@@ -302,8 +321,8 @@ func (m Model) viewRescue(width int) string {
 
 func viewKeyHints(width int) string {
 	return lipgloss.JoinVertical(lipgloss.Left,
-		dimStyle.Width(width).Render("↑↓ nav  s sort  / filter"),
-		dimStyle.Width(width).Render("x kill  p pause  ? help"),
+		dimStyle.Width(width).Render("↑↓ nav  ↵ fold  s sort"),
+		dimStyle.Width(width).Render("/ filter  x kill  ? help"),
 	)
 }
 
@@ -334,11 +353,11 @@ func (m Model) viewStatus(w int) string {
 
 // --- modals ---
 
-func (m Model) viewKillModal(apps []collector.AppStat) string {
-	if m.cursor >= len(apps) {
+func (m Model) viewKillModal(rows []VisibleRow) string {
+	if m.cursor >= len(rows) {
 		return ""
 	}
-	a := apps[m.cursor]
+	a := rows[m.cursor].App
 
 	content := fmt.Sprintf(
 		"%s  Kill %s?\n\n"+
@@ -364,6 +383,7 @@ func (m Model) viewHelpModal() string {
 		"  " + helpKeyStyle.Render("↑/k") + "  Move up\n" +
 		"  " + helpKeyStyle.Render("↓/j") + "  Move down\n\n" +
 		sectionStyle.Render("Actions") + "\n" +
+		"  " + helpKeyStyle.Render("↵") + "    Fold/unfold group\n" +
 		"  " + helpKeyStyle.Render("x") + "    Send SIGTERM to selected\n" +
 		"  " + helpKeyStyle.Render("X") + "    Send SIGKILL to selected\n\n" +
 		sectionStyle.Render("Display") + "\n" +

@@ -46,6 +46,7 @@ type Model struct {
 	filter    string
 	filtering bool
 	paused    bool
+	expanded  map[string]bool // which groups are unfolded
 
 	killConfirm bool
 	killSignal  string // "TERM" or "KILL"
@@ -83,7 +84,7 @@ func New(cfg Config) Model {
 	if d == 0 {
 		d = 3 * time.Second
 	}
-	return Model{interval: d, input: ti}
+	return Model{interval: d, input: ti, expanded: make(map[string]bool)}
 }
 
 // Init starts the first collection and tick.
@@ -127,8 +128,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.prevSnap = m.snap
 		m.snap = msg.s
 		m.err = nil
-		if apps := m.sortedApps(); m.cursor >= len(apps) {
-			m.cursor = max(0, len(apps)-1)
+		if rows := m.visibleRows(m.sortedApps()); m.cursor >= len(rows) {
+			m.cursor = max(0, len(rows)-1)
 		}
 
 	case snapErr:
@@ -196,9 +197,9 @@ func (m Model) handleKillKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.Confirm):
 		m.killConfirm = false
-		apps := m.sortedApps()
-		if m.cursor < len(apps) {
-			return m, doKill(apps[m.cursor].Name, m.killSignal)
+		rows := m.visibleRows(m.sortedApps())
+		if m.cursor < len(rows) {
+			return m, doKill(rows[m.cursor].App.Name, m.killSignal)
 		}
 	case key.Matches(msg, keys.Cancel):
 		m.killConfirm = false
@@ -213,8 +214,16 @@ func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.Up):
 		m.cursor = max(0, m.cursor-1)
 	case key.Matches(msg, keys.Down):
-		apps := m.sortedApps()
-		m.cursor = min(m.cursor+1, max(0, len(apps)-1))
+		rows := m.visibleRows(m.sortedApps())
+		m.cursor = min(m.cursor+1, max(0, len(rows)-1))
+	case key.Matches(msg, keys.Toggle):
+		rows := m.visibleRows(m.sortedApps())
+		if m.cursor < len(rows) {
+			r := rows[m.cursor]
+			if r.Kind == RowGroup {
+				m.expanded[r.App.Name] = !m.expanded[r.App.Name]
+			}
+		}
 	case key.Matches(msg, keys.Sort):
 		m.sort = (m.sort + 1) % sortModeCount
 	case key.Matches(msg, keys.Filter):
@@ -304,4 +313,41 @@ func (m Model) delta(name string) (rssKB, swapKB int64) {
 		}
 	}
 	return cr - pr, cs - ps
+}
+
+// --- visible row abstraction for fold/unfold ---
+
+// RowKind distinguishes group headers from expanded child processes.
+type RowKind int
+
+const (
+	RowGroup RowKind = iota
+	RowChild
+)
+
+// VisibleRow is one row in the flattened table (group or child).
+type VisibleRow struct {
+	Kind     RowKind
+	App      collector.AppStat
+	AppIdx   int
+	Child    collector.ProcDetail
+	ChildIdx int
+}
+
+// visibleRows returns the flattened list of rows including expanded children.
+func (m Model) visibleRows(apps []collector.AppStat) []VisibleRow {
+	rows := make([]VisibleRow, 0, len(apps)*2)
+	for i, app := range apps {
+		rows = append(rows, VisibleRow{Kind: RowGroup, App: app, AppIdx: i})
+		if m.expanded[app.Name] {
+			limit := min(len(app.Children), 15)
+			for j := range limit {
+				rows = append(rows, VisibleRow{
+					Kind: RowChild, App: app, AppIdx: i,
+					Child: app.Children[j], ChildIdx: j,
+				})
+			}
+		}
+	}
+	return rows
 }

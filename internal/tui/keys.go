@@ -5,6 +5,7 @@ import "charm.land/bubbles/v2/key"
 type keyMap struct {
 	Up        key.Binding
 	Down      key.Binding
+	Toggle    key.Binding
 	Sort      key.Binding
 	Filter    key.Binding
 	Pause     key.Binding
@@ -24,6 +25,10 @@ var keys = keyMap{
 	Down: key.NewBinding(
 		key.WithKeys("down", "j"),
 		key.WithHelp("↓/j", "down"),
+	),
+	Toggle: key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("↵", "fold/unfold"),
 	),
 	Sort: key.NewBinding(
 		key.WithKeys("s"),
