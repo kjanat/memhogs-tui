@@ -1,4 +1,4 @@
-//go:build !linux && !windows
+//go:build !linux && !windows && !darwin && !(freebsd && amd64) && !(openbsd && amd64)
 
 package collector
 
