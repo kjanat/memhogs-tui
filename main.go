@@ -1,3 +1,19 @@
+// Memhogs is a TUI memory monitor for Linux.
+// It shows grouped memory usage by application with fold/unfold, sorting,
+// filtering, and process kill support.
+//
+// Usage:
+//
+//	memhogs [-i SECONDS] [SECONDS]
+//
+// The flags are:
+//
+//	-i
+//	    Refresh interval in seconds (default: 3).
+//
+// A bare numeric argument is treated as the refresh interval.
+// The WATCH environment variable also sets the interval for backwards
+// compatibility.
 package main
 
 import (

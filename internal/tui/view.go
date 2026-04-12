@@ -11,7 +11,10 @@ import (
 	"github.com/kjanat/memhogs-tui/internal/collector"
 )
 
-// View renders the full UI.
+// View renders the full-screen UI and enables the alternate screen buffer.
+// It composes a left-side application table, an optional right-side detail
+// sidebar, and a bottom status bar.
+// Kill-confirm and help modals replace the entire screen when active.
 func (m Model) View() tea.View {
 	if m.width == 0 || m.snap == nil {
 		v := tea.NewView("  Collecting…")
@@ -64,8 +67,6 @@ func (m Model) View() tea.View {
 	v.AltScreen = true
 	return v
 }
-
-// --- app table ---
 
 func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 	// prefix(2) + name + rss(8) + swap(8) + procs(6) + pct(7) + gap(1)
@@ -174,8 +175,6 @@ func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 
 	return b.String()
 }
-
-// --- sidebar ---
 
 func (m Model) viewSide(rows []VisibleRow, width int) string {
 	sections := make([]string, 0, 6)
@@ -329,8 +328,6 @@ func viewKeyHints(width int) string {
 	)
 }
 
-// --- status bar ---
-
 func (m Model) viewStatus(w int) string {
 	var left, right string
 
@@ -353,8 +350,6 @@ func (m Model) viewStatus(w int) string {
 
 	return statusStyle.Render(left + strings.Repeat(" ", gap) + right)
 }
-
-// --- modals ---
 
 func (m Model) viewKillModal(rows []VisibleRow) string {
 	if m.cursor >= len(rows) {
@@ -398,8 +393,6 @@ func (m Model) viewHelpModal() string {
 
 	return helpModalStyle.Render(help)
 }
-
-// --- helpers ---
 
 const kvLabelW = 6
 

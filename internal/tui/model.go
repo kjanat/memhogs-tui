@@ -1,3 +1,9 @@
+// Package tui implements the terminal user interface for memhogs using
+// [Bubble Tea].
+// It follows The Elm Architecture: [Model] holds state, [Model.Update] handles
+// messages, and [Model.View] renders the screen.
+//
+// [Bubble Tea]: https://charm.sh/libs/bubbletea
 package tui
 
 import (
@@ -15,28 +21,33 @@ import (
 	"github.com/kjanat/memhogs-tui/internal/collector"
 )
 
-// SortMode controls the table sort order.
+// SortMode determines which column the application table is sorted by.
+// Cycle through modes with the "s" key.
 type SortMode int
 
 const (
-	SortRSS SortMode = iota
-	SortSwap
-	SortProcs
-	SortMemPct
-	SortName
+	SortRSS    SortMode = iota // resident set size
+	SortSwap                   // swap usage
+	SortProcs                  // process count
+	SortMemPct                 // percentage of total RAM
+	SortName                   // alphabetical
 	sortModeCount
 )
 
+// String returns the short label shown in the table header.
 func (s SortMode) String() string {
 	return [...]string{"RSS", "Swap", "Procs", "Mem%", "Name"}[s]
 }
 
-// Config holds startup parameters.
+// Config holds startup parameters for [New].
 type Config struct {
+	// Interval is the time between snapshot refreshes.
+	// Zero defaults to 3 seconds.
 	Interval time.Duration
 }
 
-// Model is the Bubble Tea model.
+// Model holds the full application state: current and previous snapshots,
+// cursor position, sort/filter/expand state, and terminal dimensions.
 type Model struct {
 	snap     *collector.Snapshot
 	prevSnap *collector.Snapshot
@@ -62,8 +73,6 @@ type Model struct {
 	help  bool
 }
 
-// --- messages ---
-
 type snapMsg struct{ s *collector.Snapshot }
 type snapErr struct{ e error }
 type tick struct{}
@@ -74,7 +83,9 @@ type killDone struct {
 	err  error
 }
 
-// New creates a fresh model.
+// New returns a Model initialized with the given refresh interval and
+// an empty expanded-groups set.
+// The first snapshot is collected when [Model.Init] runs.
 func New(cfg Config) Model {
 	ti := textinput.New()
 	ti.Placeholder = "filter…"
@@ -159,8 +170,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	return m, nil
 }
-
-// --- key handlers ---
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.filtering {
@@ -250,8 +259,6 @@ func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// --- derived state ---
-
 // sortedApps returns a filtered+sorted copy of the current snapshot's apps.
 func (m Model) sortedApps() []collector.AppStat {
 	if m.snap == nil {
@@ -315,23 +322,23 @@ func (m Model) delta(name string) (rssKB, swapKB int64) {
 	return cr - pr, cs - ps
 }
 
-// --- visible row abstraction for fold/unfold ---
-
-// RowKind distinguishes group headers from expanded child processes.
+// RowKind tags a [VisibleRow] as either a group header or an expanded child.
 type RowKind int
 
 const (
-	RowGroup RowKind = iota
-	RowChild
+	RowGroup RowKind = iota // aggregated application row
+	RowChild                // individual process within an expanded group
 )
 
-// VisibleRow is one row in the flattened table (group or child).
+// VisibleRow represents one row in the flattened display table.
+// For a [RowGroup], App holds the aggregated stats.
+// For a [RowChild], Child holds the individual process detail.
 type VisibleRow struct {
-	Kind     RowKind
-	App      collector.AppStat
-	AppIdx   int
-	Child    collector.ProcDetail
-	ChildIdx int
+	Kind     RowKind              // group header or expanded child
+	App      collector.AppStat    // parent group (populated for both kinds)
+	AppIdx   int                  // index into the sorted apps slice
+	Child    collector.ProcDetail // individual process (only meaningful for RowChild)
+	ChildIdx int                  // index into App.Children (only meaningful for RowChild)
 }
 
 // visibleRows returns the flattened list of rows including expanded children.
