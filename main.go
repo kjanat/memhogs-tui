@@ -28,14 +28,30 @@ import (
 	"github.com/kjanat/memhogs-tui/internal/tui"
 )
 
+// Set via -ldflags at build time:
+//
+//	go build -ldflags "-X main.version=v0.1.0 -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
 func main() {
+	showVersion := flag.Bool("v", false, "print version and exit")
 	interval := flag.Int("i", 3, "refresh interval (seconds)")
 	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "memhogs %s (%s, %s)\n\n", version, commit, date)
 		fmt.Fprintf(os.Stderr, "Usage: memhogs [-i SECONDS] [SECONDS]\n\n")
 		fmt.Fprintf(os.Stderr, "TUI memory monitor — grouped memory usage by application.\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("memhogs %s (commit %s, built %s)\n", version, commit, date)
+		return
+	}
 
 	// Positional arg as interval: memhogs 5
 	if flag.NArg() > 0 {
