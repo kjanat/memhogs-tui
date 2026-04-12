@@ -1,4 +1,4 @@
-// Memhogs is a TUI memory monitor for Linux.
+// Memhogs is a TUI memory monitor for Linux and Windows.
 // It shows grouped memory usage by application with fold/unfold, sorting,
 // filtering, and process kill support.
 //

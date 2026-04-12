@@ -317,9 +317,7 @@ func (m Model) viewRescue(width int) string {
 	}
 	header := sectionDivStyle.Width(width).Render("Rescue")
 	top := m.snap.Apps[0]
-	cmd := warnStyle.PaddingLeft(2).Width(width).Render(
-		fmt.Sprintf("pkill -x -- %s", top.Name),
-	)
+	cmd := warnStyle.PaddingLeft(2).Width(width).Render(rescueCmdStr(top.Name))
 	return lipgloss.JoinVertical(lipgloss.Left, header, cmd)
 }
 
@@ -361,15 +359,15 @@ func (m Model) viewKillModal(rows []VisibleRow) string {
 
 	content := fmt.Sprintf(
 		"%s  Kill %s?\n\n"+
-			"  Signal:  SIG%s\n"+
+			"  Signal:  %s\n"+
 			"  Procs:   %d\n"+
 			"  RSS:     %d MB\n"+
-			"  Command: pkill -%s -x -- %s\n\n"+
+			"  Command: %s\n\n"+
 			"  %s confirm    %s cancel",
 		lipgloss.NewStyle().Foreground(colorDanger).Bold(true).Render("⚠"),
 		titleStyle.Render(a.Name),
-		m.killSignal, a.ProcCount, a.RSSKB/1024,
-		m.killSignal, a.Name,
+		killSignalName(m.killForce), a.ProcCount, a.RSSKB/1024,
+		killCmdStr(a.Name, m.killForce),
 		helpKeyStyle.Render("y"),
 		helpKeyStyle.Render("n/esc"),
 	)
@@ -384,8 +382,8 @@ func (m Model) viewHelpModal() string {
 		"  " + helpKeyStyle.Render("↓/j") + "  Move down\n\n" +
 		sectionStyle.Render("Actions") + "\n" +
 		"  " + helpKeyStyle.Render("↵") + "    Fold/unfold group\n" +
-		"  " + helpKeyStyle.Render("x") + "    Send SIGTERM to selected\n" +
-		"  " + helpKeyStyle.Render("X") + "    Send SIGKILL to selected\n\n" +
+		"  " + helpKeyStyle.Render("x") + "    " + killSignalName(false) + " selected\n" +
+		"  " + helpKeyStyle.Render("X") + "    " + killSignalName(true) + " selected\n\n" +
 		sectionStyle.Render("Display") + "\n" +
 		"  " + helpKeyStyle.Render("s") + "    Cycle sort mode\n" +
 		"  " + helpKeyStyle.Render("/") + "    Filter by name\n" +

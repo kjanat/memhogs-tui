@@ -54,11 +54,11 @@ var keys = keyMap{
 	),
 	Kill: key.NewBinding(
 		key.WithKeys("x"),
-		key.WithHelp("x", "SIGTERM"),
+		key.WithHelp("x", "kill"),
 	),
 	ForceKill: key.NewBinding(
 		key.WithKeys("X"),
-		key.WithHelp("X", "SIGKILL"),
+		key.WithHelp("X", "force kill"),
 	),
 	Help: key.NewBinding(
 		key.WithKeys("?"),

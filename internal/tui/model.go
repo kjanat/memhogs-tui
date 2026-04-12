@@ -9,7 +9,6 @@ package tui
 import (
 	"cmp"
 	"fmt"
-	"os/exec"
 	"slices"
 	"strings"
 	"time"
@@ -60,7 +59,7 @@ type Model struct {
 	expanded  map[string]bool // which groups are unfolded
 
 	killConfirm bool
-	killSignal  string // "TERM" or "KILL"
+	killForce   bool // false = graceful, true = force kill
 
 	width  int
 	height int
@@ -121,10 +120,15 @@ func doClearStatus() tea.Cmd {
 	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return clearStatus{} })
 }
 
-func doKill(name, sig string) tea.Cmd {
+func doKill(app collector.AppStat, force bool) tea.Cmd {
 	return func() tea.Msg {
-		err := exec.Command("pkill", "-"+sig, "-x", "--", name).Run()
-		return killDone{name: name, err: err}
+		var firstErr error
+		for _, c := range app.Children {
+			if err := killProcess(c.PID, force); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		return killDone{name: app.Name, err: firstErr}
 	}
 }
 
@@ -208,7 +212,7 @@ func (m Model) handleKillKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.killConfirm = false
 		rows := m.visibleRows(m.sortedApps())
 		if m.cursor < len(rows) {
-			return m, doKill(rows[m.cursor].App.Name, m.killSignal)
+			return m, doKill(rows[m.cursor].App, m.killForce)
 		}
 	case key.Matches(msg, keys.Cancel):
 		m.killConfirm = false
@@ -275,10 +279,10 @@ func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case key.Matches(msg, keys.Kill):
 		m.killConfirm = true
-		m.killSignal = "TERM"
+		m.killForce = false
 	case key.Matches(msg, keys.ForceKill):
 		m.killConfirm = true
-		m.killSignal = "KILL"
+		m.killForce = true
 	case key.Matches(msg, keys.Help):
 		m.help = !m.help
 	}
