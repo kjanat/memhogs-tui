@@ -125,10 +125,12 @@ func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 				name = name[:nameW-1] + "…"
 			}
 
-			// Fold indicator
-			pfx := "▸ "
-			if m.expanded[a.Name] {
-				pfx = "▾ "
+			pfx := "  "
+			if a.ProcCount > 1 {
+				pfx = "▸ "
+				if m.expanded[a.Name] {
+					pfx = "▾ "
+				}
 			}
 
 			row := fmt.Sprintf("%s%-*s %5dMB %5dMB %5d %5.1f%%",

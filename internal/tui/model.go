@@ -229,8 +229,34 @@ func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		rows := m.visibleRows(m.sortedApps())
 		if m.cursor < len(rows) {
 			r := rows[m.cursor]
-			if r.Kind == RowGroup {
+			if r.Kind == RowGroup && r.App.ProcCount > 1 {
 				m.expanded[r.App.Name] = !m.expanded[r.App.Name]
+			}
+		}
+	case key.Matches(msg, keys.Expand):
+		rows := m.visibleRows(m.sortedApps())
+		if m.cursor < len(rows) {
+			r := rows[m.cursor]
+			if r.Kind == RowGroup && r.App.ProcCount > 1 {
+				m.expanded[r.App.Name] = true
+			}
+		}
+	case key.Matches(msg, keys.Collapse):
+		rows := m.visibleRows(m.sortedApps())
+		if m.cursor < len(rows) {
+			r := rows[m.cursor]
+			switch r.Kind {
+			case RowGroup:
+				m.expanded[r.App.Name] = false
+			case RowChild:
+				// Jump cursor to parent group
+				m.expanded[r.App.Name] = false
+				for j := m.cursor - 1; j >= 0; j-- {
+					if rows[j].Kind == RowGroup {
+						m.cursor = j
+						break
+					}
+				}
 			}
 		}
 	case key.Matches(msg, keys.Sort):

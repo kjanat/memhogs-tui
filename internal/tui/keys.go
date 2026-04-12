@@ -6,6 +6,8 @@ type keyMap struct {
 	Up        key.Binding
 	Down      key.Binding
 	Toggle    key.Binding
+	Expand    key.Binding
+	Collapse  key.Binding
 	Sort      key.Binding
 	Filter    key.Binding
 	Pause     key.Binding
@@ -28,7 +30,15 @@ var keys = keyMap{
 	),
 	Toggle: key.NewBinding(
 		key.WithKeys("enter"),
-		key.WithHelp("↵", "fold/unfold"),
+		key.WithHelp("↵", "toggle"),
+	),
+	Expand: key.NewBinding(
+		key.WithKeys("right", "l"),
+		key.WithHelp("→/l", "unfold"),
+	),
+	Collapse: key.NewBinding(
+		key.WithKeys("left", "h"),
+		key.WithHelp("←/h", "fold"),
 	),
 	Sort: key.NewBinding(
 		key.WithKeys("s"),
