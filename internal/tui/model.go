@@ -120,15 +120,23 @@ func doClearStatus() tea.Cmd {
 	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return clearStatus{} })
 }
 
-func doKill(app collector.AppStat, force bool) tea.Cmd {
+// doKill kills the process(es) the cursor row points at: a single PID for a
+// RowChild, or every PID in the group for a RowGroup header.
+func doKill(row VisibleRow, force bool) tea.Cmd {
 	return func() tea.Msg {
-		var firstErr error
-		for _, c := range app.Children {
-			if err := killProcess(c.PID, force); err != nil && firstErr == nil {
-				firstErr = err
+		switch row.Kind {
+		case RowChild:
+			err := killProcess(row.Child.PID, force)
+			return killDone{name: fmt.Sprintf("%s [%d]", row.App.Name, row.Child.PID), err: err}
+		default:
+			var firstErr error
+			for _, c := range row.App.Children {
+				if err := killProcess(c.PID, force); err != nil && firstErr == nil {
+					firstErr = err
+				}
 			}
+			return killDone{name: row.App.Name, err: firstErr}
 		}
-		return killDone{name: app.Name, err: firstErr}
 	}
 }
 
@@ -212,7 +220,7 @@ func (m Model) handleKillKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.killConfirm = false
 		rows := m.visibleRows(m.sortedApps())
 		if m.cursor < len(rows) {
-			return m, doKill(rows[m.cursor].App, m.killForce)
+			return m, doKill(rows[m.cursor], m.killForce)
 		}
 	case key.Matches(msg, keys.Cancel):
 		m.killConfirm = false

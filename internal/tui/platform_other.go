@@ -19,6 +19,10 @@ func killCmdStr(name string, force bool) string {
 	return fmt.Sprintf("kill %q (unsupported platform)", name)
 }
 
+func killCmdStrPID(pid int, force bool) string {
+	return fmt.Sprintf("kill %d (unsupported platform)", pid)
+}
+
 func rescueCmdStr(name string) string {
 	return fmt.Sprintf("kill %q (unsupported platform)", name)
 }

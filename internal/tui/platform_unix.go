@@ -38,6 +38,15 @@ func killCmdStr(name string, force bool) string {
 	return fmt.Sprintf("pkill -%s -x -- %q", sig, name)
 }
 
+// killCmdStrPID returns the shell command shown when killing a single process.
+func killCmdStrPID(pid int, force bool) string {
+	sig := "TERM"
+	if force {
+		sig = "KILL"
+	}
+	return fmt.Sprintf("kill -%s %d", sig, pid)
+}
+
 // rescueCmdStr returns the emergency kill command shown in the sidebar.
 func rescueCmdStr(name string) string {
 	return fmt.Sprintf("pkill -x -- %q", name)

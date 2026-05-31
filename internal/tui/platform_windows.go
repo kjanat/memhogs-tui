@@ -32,6 +32,12 @@ func killCmdStr(name string, force bool) string {
 	return fmt.Sprintf("taskkill /IM %q /F", name+".exe")
 }
 
+// killCmdStrPID returns the command shown when killing a single process.
+// Go's os.Process.Kill maps to TerminateProcess, so both modes use /F.
+func killCmdStrPID(pid int, force bool) string {
+	return fmt.Sprintf("taskkill /PID %d /F", pid)
+}
+
 // rescueCmdStr returns the emergency kill command shown in the sidebar.
 func rescueCmdStr(name string) string {
 	return fmt.Sprintf("taskkill /IM %q /F", name+".exe")

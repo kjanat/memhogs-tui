@@ -182,7 +182,12 @@ func (m Model) viewSide(rows []VisibleRow, width int) string {
 	sections := make([]string, 0, 6)
 
 	if m.cursor < len(rows) {
-		sections = append(sections, m.viewDetail(rows[m.cursor].App, width))
+		r := rows[m.cursor]
+		if r.Kind == RowChild {
+			sections = append(sections, m.viewDetailChild(r.App.Name, r.Child, width))
+		} else {
+			sections = append(sections, m.viewDetail(r.App, width))
+		}
 	}
 
 	sections = append(sections, m.viewSystem(width))
@@ -221,6 +226,41 @@ func (m Model) viewDetail(a collector.AppStat, width int) string {
 	} else {
 		rows = append(rows, strings.Repeat(" ", width))
 	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// viewDetailChild renders the detail panel for a single highlighted process
+// within an expanded group. Unlike viewDetail it shows the PID and command
+// line; Mem% is computed against total RAM since ProcDetail carries no
+// precomputed percentage, and per-PID deltas are not tracked.
+func (m Model) viewDetailChild(name string, c collector.ProcDetail, width int) string {
+	var memPct float64
+	if total := m.snap.System.MemTotalKB; total > 0 {
+		memPct = float64(c.RSSKB) / float64(total) * 100
+	}
+
+	rows := []string{
+		titleStyle.Width(width).Render(fmt.Sprintf("▸ %s [%d]", name, c.PID)),
+		kvRow("RSS", fmt.Sprintf("%d MB", c.RSSKB/1024), width),
+		kvRow("Swap", fmt.Sprintf("%d MB", c.SwapKB/1024), width),
+		kvRow("Mem%", fmt.Sprintf("%.1f%%", memPct), width),
+	}
+
+	// Reserve the remaining rows (matching viewDetail's height) for the
+	// command line. Truncate to a single line — wrapping a long cmdline would
+	// jitter the layout as the cursor moves between rows.
+	cmd := c.Cmdline
+	if cmd == "" {
+		cmd = name
+	}
+	if len(cmd) > width {
+		cmd = cmd[:max(width-1, 0)] + "…"
+	}
+	rows = append(rows,
+		sectionStyle.Width(width).Render("Command"),
+		dimStyle.Width(width).Render(cmd),
+	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
@@ -355,7 +395,23 @@ func (m Model) viewKillModal(rows []VisibleRow) string {
 	if m.cursor >= len(rows) {
 		return ""
 	}
-	a := rows[m.cursor].App
+	r := rows[m.cursor]
+
+	var title string
+	var procs int
+	var rssKB int64
+	var cmd string
+	if r.Kind == RowChild {
+		title = fmt.Sprintf("%s [%d]", r.App.Name, r.Child.PID)
+		procs = 1
+		rssKB = r.Child.RSSKB
+		cmd = killCmdStrPID(r.Child.PID, m.killForce)
+	} else {
+		title = r.App.Name
+		procs = r.App.ProcCount
+		rssKB = r.App.RSSKB
+		cmd = killCmdStr(r.App.Name, m.killForce)
+	}
 
 	content := fmt.Sprintf(
 		"%s  Kill %s?\n\n"+
@@ -365,9 +421,9 @@ func (m Model) viewKillModal(rows []VisibleRow) string {
 			"  Command: %s\n\n"+
 			"  %s confirm    %s cancel",
 		lipgloss.NewStyle().Foreground(colorDanger).Bold(true).Render("⚠"),
-		titleStyle.Render(a.Name),
-		killSignalName(m.killForce), a.ProcCount, a.RSSKB/1024,
-		killCmdStr(a.Name, m.killForce),
+		titleStyle.Render(title),
+		killSignalName(m.killForce), procs, rssKB/1024,
+		cmd,
 		helpKeyStyle.Render("y"),
 		helpKeyStyle.Render("n/esc"),
 	)
