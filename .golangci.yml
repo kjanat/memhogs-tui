@@ -1,0 +1,89 @@
+# yaml-language-server: $schema=https://golangci-lint.run/jsonschema/golangci.jsonschema.json
+# golangci-lint configuration for memhogs-tui.
+#
+# Conventions:
+#   - Enabled lint set is explicit; the default set drifts across releases
+#     and tests of "fresh checkout passes lint" become noisy over time.
+#   - All linters are errors. We brought the new config in as warnings, fixed
+#     the violations in one focused commit, then promoted to errors so the
+#     bar is visible from now on.
+#   - Test files get a slightly relaxed set: error-checking on every Fprintln
+#     and noctx on every httptest call wastes everyone's afternoon.
+---
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: mod
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable: [gci, gofumpt, gofmt, goimports]
+  settings:
+    gci: { sections: [standard, default, localmodule] }
+    goimports: { local-prefixes: [memhogs.kjanat.dev] }
+    gofumpt: { module-path: memhogs.kjanat.dev, extra-rules: true }
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - errcheck
+    - errchkjson
+    - errorlint
+    - exhaustive
+    - fatcontext
+    - gocheckcompilerdirectives
+    - goconst
+    - gocritic
+    - gocyclo
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - modernize
+    - nakedret
+    - nilerr
+    - noctx
+    - predeclared
+    - prealloc
+    - reassign
+    - revive
+    - staticcheck
+    - tagalign
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - usetesting
+    - wastedassign
+  settings:
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+    govet:
+      enable-all: true
+      disable: [fieldalignment, shadow]
+    revive:
+      rules: [name: var-naming, name: package-comments, { name: exported, severity: warning }]
+    gocritic: { disabled-checks: [ifElseChain] }
+    gocyclo: { min-complexity: 10 }
+    # A switch whose default branch deliberately handles the remaining enum
+    # values (e.g. RowGroup defaulting to the aggregate kill path) is exhaustive.
+    exhaustive: { default-signifies-exhaustive: true }
+  exclusions:
+    rules:
+      # Test relaxation: noctx on every httptest call, error-checking every
+      # stub Encode, and http.MethodGet over "GET" in table tests all waste
+      # everyone's afternoon. usestdlibvars/noctx still apply to prod code.
+      - { path: _test\.go, linters: [errcheck, errchkjson, bodyclose, noctx, revive, goconst, usestdlibvars] }
+      # The collectors read /proc/<pid>/{comm,cmdline,status,oom_score} via a
+      # path built from PIDs enumerated from /proc itself — never user input.
+      # G304 is a false positive here and inline #nosec suppression is banned.
+      - { path: internal/collector/, linters: [gosec], text: "G304" }

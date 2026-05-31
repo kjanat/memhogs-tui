@@ -1,4 +1,4 @@
-module github.com/kjanat/memhogs-tui
+module memhogs.kjanat.dev
 
 go 1.26.2
 

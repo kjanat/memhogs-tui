@@ -40,29 +40,27 @@ func readMemInfo() (SystemInfo, error) {
 		return SystemInfo{}, err
 	}
 	var info SystemInfo
+	// Map each /proc/meminfo key to the field it fills; absent keys stay zero.
+	dst := map[string]*int64{
+		"MemTotal":     &info.MemTotalKB,
+		"MemAvailable": &info.MemAvailableKB,
+		"SwapTotal":    &info.SwapTotalKB,
+		"SwapFree":     &info.SwapFreeKB,
+		"Zswap":        &info.ZswapPoolKB,
+		"Zswapped":     &info.ZswapDataKB,
+	}
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) < 2 {
 			continue
 		}
-		val, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil {
+		field, ok := dst[strings.TrimSuffix(fields[0], ":")]
+		if !ok {
 			continue
 		}
-		switch strings.TrimSuffix(fields[0], ":") {
-		case "MemTotal":
-			info.MemTotalKB = val
-		case "MemAvailable":
-			info.MemAvailableKB = val
-		case "SwapTotal":
-			info.SwapTotalKB = val
-		case "SwapFree":
-			info.SwapFreeKB = val
-		case "Zswap":
-			info.ZswapPoolKB = val
-		case "Zswapped":
-			info.ZswapDataKB = val
+		if val, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+			*field = val
 		}
 	}
 	info.MemUsedKB = info.MemTotalKB - info.MemAvailableKB
@@ -266,37 +264,9 @@ func collectOOM() []OOMEntry {
 
 	var oom []OOMEntry
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+		if entry, ok := oomEntry(e); ok {
+			oom = append(oom, entry)
 		}
-		pid := e.Name()
-		if len(pid) == 0 || pid[0] < '0' || pid[0] > '9' {
-			continue
-		}
-
-		dir := filepath.Join("/proc", pid)
-		raw, err := os.ReadFile(filepath.Join(dir, "oom_score"))
-		if err != nil {
-			continue
-		}
-		score, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-		if err != nil || score < 10 {
-			continue
-		}
-
-		name := procName(dir)
-		if name == "" {
-			continue
-		}
-		rss, _ := procMem(dir)
-		pidNum, _ := strconv.Atoi(pid)
-
-		oom = append(oom, OOMEntry{
-			Score: score,
-			RSSKB: rss,
-			Name:  name,
-			PID:   pidNum,
-		})
 	}
 
 	slices.SortFunc(oom, func(a, b OOMEntry) int {
@@ -306,4 +276,35 @@ func collectOOM() []OOMEntry {
 		oom = oom[:10]
 	}
 	return oom
+}
+
+// oomEntry reads one /proc entry into an OOMEntry, reporting false for
+// non-PID dirs, unreadable scores, or processes below the display threshold.
+func oomEntry(e os.DirEntry) (OOMEntry, bool) {
+	if !e.IsDir() {
+		return OOMEntry{}, false
+	}
+	pid := e.Name()
+	if len(pid) == 0 || pid[0] < '0' || pid[0] > '9' {
+		return OOMEntry{}, false
+	}
+
+	dir := filepath.Join("/proc", pid)
+	raw, err := os.ReadFile(filepath.Join(dir, "oom_score"))
+	if err != nil {
+		return OOMEntry{}, false
+	}
+	score, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || score < 10 {
+		return OOMEntry{}, false
+	}
+
+	name := procName(dir)
+	if name == "" {
+		return OOMEntry{}, false
+	}
+	rss, _ := procMem(dir)
+	pidNum, _ := strconv.Atoi(pid)
+
+	return OOMEntry{Score: score, RSSKB: rss, Name: name, PID: pidNum}, true
 }

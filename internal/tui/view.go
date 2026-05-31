@@ -8,7 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 	lgtable "charm.land/lipgloss/v2/table"
 
-	"github.com/kjanat/memhogs-tui/internal/collector"
+	"memhogs.kjanat.dev/internal/collector"
 )
 
 // View renders the full-screen UI and enables the alternate screen buffer.
@@ -68,40 +68,15 @@ func (m Model) View() tea.View {
 	return v
 }
 
+// tableFixedW is the non-name, non-bar column budget:
+// prefix(2) + rss(8) + swap(8) + procs(6) + pct(7) + gap(1).
+const tableFixedW = 2 + 8 + 8 + 6 + 7 + 1
+
 func (m Model) viewTable(rows []VisibleRow, w, h int) string {
-	// prefix(2) + name + rss(8) + swap(8) + procs(6) + pct(7) + gap(1)
-	const fixed = 2 + 8 + 8 + 6 + 7 + 1
-
-	nameW := 16
-	for _, r := range rows {
-		if r.Kind == RowGroup {
-			if n := len(r.App.Name); n > nameW {
-				nameW = n
-			}
-		}
-	}
-	nameW = min(nameW, max((w-fixed)/2, 16))
-	barW := max(w-nameW-fixed, 0)
-	barW = min(barW, w/3)
-
-	var maxRSS int64
-	for _, r := range rows {
-		if r.Kind == RowGroup && r.App.RSSKB > maxRSS {
-			maxRSS = r.App.RSSKB
-		}
-	}
+	nameW, barW, maxRSS := tableLayout(rows, w)
 
 	var b strings.Builder
-
-	// Title
-	title := fmt.Sprintf(" Applications  sort:%s", m.sort)
-	if m.filter != "" {
-		title += "  /" + m.filter
-	}
-	if m.paused {
-		title += "  ⏸"
-	}
-	b.WriteString(titleStyle.Render(title))
+	b.WriteString(titleStyle.Render(m.tableTitle()))
 	b.WriteByte('\n')
 
 	hdr := fmt.Sprintf("  %-*s %7s %7s %5s %6s", nameW, "NAME", "RSS", "SWAP", "PROCS", "MEM%")
@@ -111,62 +86,17 @@ func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 	b.WriteByte('\n')
 
 	maxVisible := max(h-3, 0)
-
 	for i, r := range rows {
 		if i >= maxVisible {
 			break
 		}
-
+		selected := i == m.cursor
 		switch r.Kind {
 		case RowGroup:
-			a := r.App
-			name := a.Name
-			if len(name) > nameW {
-				name = name[:nameW-1] + "…"
-			}
-
-			pfx := "  "
-			if a.ProcCount > 1 {
-				pfx = "▸ "
-				if m.expanded[a.Name] {
-					pfx = "▾ "
-				}
-			}
-
-			row := fmt.Sprintf("%s%-*s %5dMB %5dMB %5d %5.1f%%",
-				pfx, nameW, name,
-				a.RSSKB/1024, a.SwapKB/1024,
-				a.ProcCount, a.MemPct)
-
-			if barW > 0 && maxRSS > 0 {
-				bLen := int(float64(a.RSSKB) / float64(maxRSS) * float64(barW))
-				if a.RSSKB > 0 && bLen < 1 {
-					bLen = 1
-				}
-				c := colorForPct(a.MemPct)
-				bar := lipgloss.NewStyle().Foreground(c).Render(strings.Repeat("█", bLen))
-				row += " " + bar
-			}
-
-			if i == m.cursor {
-				row = selectedStyle.Render(row)
-			}
-			b.WriteString(row)
-
+			b.WriteString(m.renderGroupRow(r.App, nameW, barW, maxRSS, selected))
 		case RowChild:
-			c := r.Child
-			cmdW := max(w-12, 20) // full width minus RSS column
-			cmd := c.Cmdline
-			if len(cmd) > cmdW {
-				cmd = cmd[:cmdW-1] + "…"
-			}
-			row := dimStyle.Render(fmt.Sprintf("    %-*s %5dMB", cmdW, cmd, c.RSSKB/1024))
-			if i == m.cursor {
-				row = selectedStyle.Render(fmt.Sprintf("  ▸ %-*s %5dMB", cmdW, cmd, c.RSSKB/1024))
-			}
-			b.WriteString(row)
+			b.WriteString(renderChildRow(r.Child, w, selected))
 		}
-
 		b.WriteByte('\n')
 	}
 
@@ -176,6 +106,86 @@ func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 	}
 
 	return b.String()
+}
+
+// tableTitle builds the header line, appending the active filter and pause
+// indicator when set.
+func (m Model) tableTitle() string {
+	title := fmt.Sprintf(" Applications  sort:%s", m.sort)
+	if m.filter != "" {
+		title += "  /" + m.filter
+	}
+	if m.paused {
+		title += "  ⏸"
+	}
+	return title
+}
+
+// tableLayout computes the name-column width, RSS-bar width, and the largest
+// group RSS used to scale the bars.
+func tableLayout(rows []VisibleRow, w int) (nameW, barW int, maxRSS int64) {
+	nameW = 16
+	for _, r := range rows {
+		if r.Kind == RowGroup && len(r.App.Name) > nameW {
+			nameW = len(r.App.Name)
+		}
+		if r.Kind == RowGroup && r.App.RSSKB > maxRSS {
+			maxRSS = r.App.RSSKB
+		}
+	}
+	nameW = min(nameW, max((w-tableFixedW)/2, 16))
+	barW = min(max(w-nameW-tableFixedW, 0), w/3)
+	return nameW, barW, maxRSS
+}
+
+// renderGroupRow formats one aggregated application row, including the fold
+// indicator and the RSS bar scaled against maxRSS.
+func (m Model) renderGroupRow(a collector.AppStat, nameW, barW int, maxRSS int64, selected bool) string {
+	name := a.Name
+	if len(name) > nameW {
+		name = name[:nameW-1] + "…"
+	}
+
+	pfx := "  "
+	if a.ProcCount > 1 {
+		pfx = "▸ "
+		if m.expanded[a.Name] {
+			pfx = "▾ "
+		}
+	}
+
+	row := fmt.Sprintf("%s%-*s %5dMB %5dMB %5d %5.1f%%",
+		pfx, nameW, name,
+		a.RSSKB/1024, a.SwapKB/1024,
+		a.ProcCount, a.MemPct)
+
+	if barW > 0 && maxRSS > 0 {
+		bLen := int(float64(a.RSSKB) / float64(maxRSS) * float64(barW))
+		if a.RSSKB > 0 && bLen < 1 {
+			bLen = 1
+		}
+		bar := lipgloss.NewStyle().Foreground(colorForPct(a.MemPct)).Render(strings.Repeat("█", bLen))
+		row += " " + bar
+	}
+
+	if selected {
+		return selectedStyle.Render(row)
+	}
+	return row
+}
+
+// renderChildRow formats one expanded per-process row: truncated command line
+// plus RSS.
+func renderChildRow(c collector.ProcDetail, w int, selected bool) string {
+	cmdW := max(w-12, 20) // full width minus RSS column
+	cmd := c.Cmdline
+	if len(cmd) > cmdW {
+		cmd = cmd[:cmdW-1] + "…"
+	}
+	if selected {
+		return selectedStyle.Render(fmt.Sprintf("  ▸ %-*s %5dMB", cmdW, cmd, c.RSSKB/1024))
+	}
+	return dimStyle.Render(fmt.Sprintf("    %-*s %5dMB", cmdW, cmd, c.RSSKB/1024))
 }
 
 func (m Model) viewSide(rows []VisibleRow, width int) string {
@@ -240,16 +250,9 @@ func (m Model) viewDetailChild(name string, c collector.ProcDetail, width int) s
 		memPct = float64(c.RSSKB) / float64(total) * 100
 	}
 
-	rows := []string{
-		titleStyle.Width(width).Render(fmt.Sprintf("▸ %s [%d]", name, c.PID)),
-		kvRow("RSS", fmt.Sprintf("%d MB", c.RSSKB/1024), width),
-		kvRow("Swap", fmt.Sprintf("%d MB", c.SwapKB/1024), width),
-		kvRow("Mem%", fmt.Sprintf("%.1f%%", memPct), width),
-	}
-
-	// Reserve the remaining rows (matching viewDetail's height) for the
-	// command line. Truncate to a single line — wrapping a long cmdline would
-	// jitter the layout as the cursor moves between rows.
+	// Reserve the last two rows (matching viewDetail's height) for the command
+	// line. Truncate to a single line — wrapping a long cmdline would jitter
+	// the layout as the cursor moves between rows.
 	cmd := c.Cmdline
 	if cmd == "" {
 		cmd = name
@@ -257,7 +260,13 @@ func (m Model) viewDetailChild(name string, c collector.ProcDetail, width int) s
 	if len(cmd) > width {
 		cmd = cmd[:max(width-1, 0)] + "…"
 	}
+
+	rows := make([]string, 0, 6)
 	rows = append(rows,
+		titleStyle.Width(width).Render(fmt.Sprintf("▸ %s [%d]", name, c.PID)),
+		kvRow("RSS", fmt.Sprintf("%d MB", c.RSSKB/1024), width),
+		kvRow("Swap", fmt.Sprintf("%d MB", c.SwapKB/1024), width),
+		kvRow("Mem%", fmt.Sprintf("%.1f%%", memPct), width),
 		sectionStyle.Width(width).Render("Command"),
 		dimStyle.Width(width).Render(cmd),
 	)

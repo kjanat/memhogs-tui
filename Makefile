@@ -1,5 +1,5 @@
 APP     := memhogs
-MODULE  := github.com/kjanat/memhogs-tui
+MODULE  := memhogs.kjanat.dev
 VERSION := $(shell git describe --tags --always --dirty)
 COMMIT  := $(shell git rev-parse --short HEAD)
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)

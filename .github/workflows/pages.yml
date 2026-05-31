@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
+name: vanity
+on: { push: { branches: [master], paths: [".github/workflows/pages.yml"] } }
+permissions: { id-token: write, contents: read, pages: write }
+concurrency: { group: pages, cancel-in-progress: true }
+env:
+  HOST: memhogs.kjanat.dev
+  GODEV: ${{ format('{0}/{1}', 'https://pkg.go.dev', vars.CNAME) }}
+  REPO: ${{ format('{0}/{1}', github.server_url, github.repository) }}
+jobs:
+  build:
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v6
+      - name: creates golang vanity {index,404}.html
+        run: |
+          set -e
+
+          HOST="${HOST:-memhogs.kjanat.dev}"
+          GODEV="${GODEV:-https://pkg.go.dev/${HOST}}"
+          REPO="${REPO:-https://github.com/kjanat/memhogs-tui}"
+          BRANCH="${BRANCH:-master}"
+
+          GOIMPORT="${HOST} git ${REPO}"
+          GOSOURCE="${HOST} ${REPO} ${REPO}/tree/${BRANCH}{/dir} ${REPO}/blob/${BRANCH}{/dir}/{file}#L{line}"
+          BODY="Redirecting to <a href=\"${GODEV}\">pkg.go.dev</a>"
+
+          mkdir -p dist
+
+          # Root: tooling reads the go-import/go-source meta; a browser is
+          # bounced to the module page on pkg.go.dev.
+          cat <<INDEX > dist/index.html
+          <!DOCTYPE html>
+          <html>
+          	<head>
+          		<meta name="go-import" content="${GOIMPORT}">
+          		<meta name="go-source" content="${GOSOURCE}">
+          		<meta http-equiv="refresh" content="0; url=${GODEV}">
+          	</head>
+          	<body>${BODY}</body>
+          </html>
+          INDEX
+          # Every other path. The go-import meta is path-independent (it
+          # always names the module root), so this one file covers every
+          # subpackage — no per-folder files to enumerate or keep in sync.
+          # GitHub Pages serves it with a 404 status, which go get and
+          # proxy.golang.org still parse for the meta tag, so subpackages
+          # resolve directly instead of via prefix fallback. Browsers get a
+          # path-aware redirect to the exact pkg.go.dev page.
+          cat <<404 > dist/404.html
+          <!DOCTYPE html>
+          <html>
+          	<head>
+          		<meta name="go-import" content="${GOIMPORT}">
+          		<meta name="go-source" content="${GOSOURCE}">
+          		<script>location.replace("${GODEV}" + location.pathname + location.search)</script>
+          	</head>
+          	<body>${BODY}</body>
+          </html>
+          404
+      - { uses: actions/upload-pages-artifact@v5, with: { path: dist } }
+  deploy:
+    needs: build
+    runs-on: ubuntu-slim
+    environment: { name: github-pages, url: "${{ steps.deployment.outputs.page_url }}" }
+    steps: [{ id: deployment, uses: actions/deploy-pages@v5 }]

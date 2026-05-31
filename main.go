@@ -25,7 +25,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/kjanat/memhogs-tui/internal/tui"
+	"memhogs.kjanat.dev/internal/tui"
 )
 
 // Set via -ldflags at build time:

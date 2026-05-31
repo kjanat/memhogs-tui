@@ -4,8 +4,8 @@ Arch froze again. Next time, have this open.
 
 ```sh
 # Install
-go install github.com/kjanat/memhogs-tui@latest
+go install memhogs.kjanat.dev@latest
 
 # Run
-go run github.com/kjanat/memhogs-tui@latest
+go run memhogs.kjanat.dev@latest
 ```

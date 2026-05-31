@@ -17,13 +17,14 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/kjanat/memhogs-tui/internal/collector"
+	"memhogs.kjanat.dev/internal/collector"
 )
 
 // SortMode determines which column the application table is sorted by.
 // Cycle through modes with the "s" key.
 type SortMode int
 
+// Sort modes for the application table, in the order the "s" key cycles them.
 const (
 	SortRSS    SortMode = iota // resident set size
 	SortSwap                   // swap usage
@@ -72,10 +73,12 @@ type Model struct {
 	help  bool
 }
 
-type snapMsg struct{ s *collector.Snapshot }
-type snapErr struct{ e error }
-type tick struct{}
-type clearStatus struct{}
+type (
+	snapMsg     struct{ s *collector.Snapshot }
+	snapErr     struct{ e error }
+	tick        struct{}
+	clearStatus struct{}
+)
 
 type killDone struct {
 	name string
@@ -148,12 +151,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case snapMsg:
-		m.prevSnap = m.snap
-		m.snap = msg.s
-		m.err = nil
-		if rows := m.visibleRows(m.sortedApps()); m.cursor >= len(rows) {
-			m.cursor = max(0, len(rows)-1)
-		}
+		m = m.applySnapshot(msg.s)
 
 	case snapErr:
 		m.err = msg.e
@@ -169,11 +167,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = ""
 
 	case killDone:
-		if msg.err != nil {
-			m.status = fmt.Sprintf("kill %s: %v", msg.name, msg.err)
-		} else {
-			m.status = fmt.Sprintf("sent signal → %s", msg.name)
-		}
+		m.status = killStatus(msg)
 		return m, doClearStatus()
 
 	case tea.KeyPressMsg:
@@ -181,6 +175,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// applySnapshot stores a fresh snapshot, retaining the previous one for deltas,
+// and clamps the cursor if the new row count shrank.
+func (m Model) applySnapshot(s *collector.Snapshot) Model {
+	m.prevSnap = m.snap
+	m.snap = s
+	m.err = nil
+	if rows := m.visibleRows(m.sortedApps()); m.cursor >= len(rows) {
+		m.cursor = max(0, len(rows)-1)
+	}
+	return m
+}
+
+// killStatus renders the status-line message for a completed kill.
+func killStatus(msg killDone) string {
+	if msg.err != nil {
+		return fmt.Sprintf("kill %s: %v", msg.name, msg.err)
+	}
+	return fmt.Sprintf("sent signal → %s", msg.name)
 }
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -228,73 +242,101 @@ func (m Model) handleKillKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleNormalKey dispatches keys that toggle global state. Cursor movement
+// and fold actions, which all need the current row list, are delegated to
+// handleNavKey.
 func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.Quit):
 		return m, tea.Quit
-	case key.Matches(msg, keys.Up):
-		m.cursor = max(0, m.cursor-1)
-	case key.Matches(msg, keys.Down):
-		rows := m.visibleRows(m.sortedApps())
-		m.cursor = min(m.cursor+1, max(0, len(rows)-1))
-	case key.Matches(msg, keys.Toggle):
-		rows := m.visibleRows(m.sortedApps())
-		if m.cursor < len(rows) {
-			r := rows[m.cursor]
-			if r.Kind == RowGroup && r.App.ProcCount > 1 {
-				m.expanded[r.App.Name] = !m.expanded[r.App.Name]
-			}
-		}
-	case key.Matches(msg, keys.Expand):
-		rows := m.visibleRows(m.sortedApps())
-		if m.cursor < len(rows) {
-			r := rows[m.cursor]
-			if r.Kind == RowGroup && r.App.ProcCount > 1 {
-				m.expanded[r.App.Name] = true
-			}
-		}
-	case key.Matches(msg, keys.Collapse):
-		rows := m.visibleRows(m.sortedApps())
-		if m.cursor < len(rows) {
-			r := rows[m.cursor]
-			switch r.Kind {
-			case RowGroup:
-				m.expanded[r.App.Name] = false
-			case RowChild:
-				// Jump cursor to parent group
-				m.expanded[r.App.Name] = false
-				for j := m.cursor - 1; j >= 0; j-- {
-					if rows[j].Kind == RowGroup {
-						m.cursor = j
-						break
-					}
-				}
-			}
-		}
-	case key.Matches(msg, keys.Sort):
-		m.sort = (m.sort + 1) % sortModeCount
 	case key.Matches(msg, keys.Filter):
 		m.filtering = true
 		m.input.SetValue(m.filter)
-		cmd := m.input.Focus()
-		return m, cmd
+		return m, m.input.Focus()
+	case key.Matches(msg, keys.Sort):
+		m.sort = (m.sort + 1) % sortModeCount
 	case key.Matches(msg, keys.Pause):
 		m.paused = !m.paused
+		m.status = ""
 		if m.paused {
 			m.status = "⏸ paused"
-		} else {
-			m.status = ""
 		}
 	case key.Matches(msg, keys.Kill):
-		m.killConfirm = true
-		m.killForce = false
+		m.killConfirm, m.killForce = true, false
 	case key.Matches(msg, keys.ForceKill):
-		m.killConfirm = true
-		m.killForce = true
+		m.killConfirm, m.killForce = true, true
 	case key.Matches(msg, keys.Help):
 		m.help = !m.help
+	default:
+		return m.handleNavKey(msg), nil
 	}
 	return m, nil
+}
+
+// handleNavKey handles cursor movement and fold/unfold against the current
+// flattened row list.
+func (m Model) handleNavKey(msg tea.KeyPressMsg) Model {
+	rows := m.visibleRows(m.sortedApps())
+	switch {
+	case key.Matches(msg, keys.Up):
+		m.cursor = max(0, m.cursor-1)
+	case key.Matches(msg, keys.Down):
+		m.cursor = min(m.cursor+1, max(0, len(rows)-1))
+	case key.Matches(msg, keys.Toggle):
+		m = m.toggleFold(rows)
+	case key.Matches(msg, keys.Expand):
+		m = m.foldGroup(rows, true)
+	case key.Matches(msg, keys.Collapse):
+		m = m.collapseRow(rows)
+	}
+	return m
+}
+
+// currentRow returns the row under the cursor, or false if the cursor is out
+// of range.
+func (m Model) currentRow(rows []VisibleRow) (VisibleRow, bool) {
+	if m.cursor < 0 || m.cursor >= len(rows) {
+		return VisibleRow{}, false
+	}
+	return rows[m.cursor], true
+}
+
+// toggleFold flips the expanded state of the highlighted multi-process group.
+func (m Model) toggleFold(rows []VisibleRow) Model {
+	if r, ok := m.currentRow(rows); ok && r.Kind == RowGroup && r.App.ProcCount > 1 {
+		m.expanded[r.App.Name] = !m.expanded[r.App.Name]
+	}
+	return m
+}
+
+// foldGroup sets the expanded state of the highlighted multi-process group.
+func (m Model) foldGroup(rows []VisibleRow, open bool) Model {
+	if r, ok := m.currentRow(rows); ok && r.Kind == RowGroup && r.App.ProcCount > 1 {
+		m.expanded[r.App.Name] = open
+	}
+	return m
+}
+
+// collapseRow folds the highlighted group, or for a child row folds its parent
+// and moves the cursor up to that parent group.
+func (m Model) collapseRow(rows []VisibleRow) Model {
+	r, ok := m.currentRow(rows)
+	if !ok {
+		return m
+	}
+	switch r.Kind {
+	case RowGroup:
+		m.expanded[r.App.Name] = false
+	case RowChild:
+		m.expanded[r.App.Name] = false
+		for j := m.cursor - 1; j >= 0; j-- {
+			if rows[j].Kind == RowGroup {
+				m.cursor = j
+				break
+			}
+		}
+	}
+	return m
 }
 
 // sortedApps returns a filtered+sorted copy of the current snapshot's apps.
@@ -334,6 +376,7 @@ func (m Model) sortedApps() []collector.AppStat {
 		slices.SortFunc(apps, func(a, b collector.AppStat) int {
 			return cmp.Compare(a.Name, b.Name)
 		})
+	case sortModeCount: // sentinel, never an active mode; leave order as-is
 	}
 
 	return apps
@@ -363,6 +406,7 @@ func (m Model) delta(name string) (rssKB, swapKB int64) {
 // RowKind tags a [VisibleRow] as either a group header or an expanded child.
 type RowKind int
 
+// Row kinds in the flattened display table.
 const (
 	RowGroup RowKind = iota // aggregated application row
 	RowChild                // individual process within an expanded group
