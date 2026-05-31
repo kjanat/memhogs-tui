@@ -8,7 +8,7 @@ LDFLAGS := -s -w \
            -X main.commit=$(COMMIT) \
            -X main.date=$(DATE)
 
-.PHONY: build run clean vet
+.PHONY: build run clean vet fmt
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o $(APP) .
@@ -18,6 +18,16 @@ run:
 
 vet:
 	go vet ./...
+
+fmt:
+	@if command -v dprint >/dev/null 2>&1; then \
+		dprint fmt; \
+	elif command -v npx >/dev/null 2>&1; then \
+		npx dprint fmt; \
+	else \
+		echo "dprint not found on PATH and npx unavailable" >&2; \
+		exit 1; \
+	fi
 
 clean:
 	rm -f $(APP)
