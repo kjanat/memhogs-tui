@@ -256,6 +256,14 @@ func parsePSIFields(line string) map[string]float64 {
 	return m
 }
 
+const (
+	// minOOMScore is the lowest oom_score worth listing; below it a process
+	// is a negligible kill candidate.
+	minOOMScore = 10
+	// maxOOMEntries caps the collected list to the worst N candidates.
+	maxOOMEntries = 10
+)
+
 func collectOOM() []OOMEntry {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
@@ -272,8 +280,8 @@ func collectOOM() []OOMEntry {
 	slices.SortFunc(oom, func(a, b OOMEntry) int {
 		return cmp.Compare(b.Score, a.Score)
 	})
-	if len(oom) > 10 {
-		oom = oom[:10]
+	if len(oom) > maxOOMEntries {
+		oom = oom[:maxOOMEntries]
 	}
 	return oom
 }
@@ -295,7 +303,7 @@ func oomEntry(e os.DirEntry) (OOMEntry, bool) {
 		return OOMEntry{}, false
 	}
 	score, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil || score < 10 {
+	if err != nil || score < minOOMScore {
 		return OOMEntry{}, false
 	}
 
