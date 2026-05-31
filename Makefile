@@ -1,5 +1,6 @@
-APP     := memhogs
+APP     := memhogs-tui
 MODULE  := memhogs.kjanat.dev
+PKG     := ./cmd/memhogs-tui
 VERSION := $(shell git describe --tags --always --dirty)
 COMMIT  := $(shell git rev-parse --short HEAD)
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -11,10 +12,10 @@ LDFLAGS := -s -w \
 .PHONY: build run clean vet fmt
 
 build:
-	go build -ldflags '$(LDFLAGS)' -o $(APP) .
+	go build -ldflags '$(LDFLAGS)' -o $(APP) $(PKG)
 
 run:
-	go run -ldflags '$(LDFLAGS)' .
+	go run -ldflags '$(LDFLAGS)' $(PKG)
 
 vet:
 	go vet ./...
