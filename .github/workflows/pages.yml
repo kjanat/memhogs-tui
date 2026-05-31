@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
 ---
 name: vanity
-on: { push: { branches: [master], paths: [".github/workflows/pages.yml"] } }
+on: { push: { branches: [master], paths: [".github/workflows/pages.yml"] }, workflow_dispatch: null }
 permissions: { id-token: write, contents: read, pages: write }
 concurrency: { group: pages, cancel-in-progress: true }
 env:
