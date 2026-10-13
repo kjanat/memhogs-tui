@@ -10,14 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     env: { C_FILE: cover.out }
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version-file: go.mod, cache: true }
       - run: go vet ./...
       - run: go build ./...
       - run: go test -race -coverprofile="${C_FILE}" -covermode=atomic ./...
       - run: go tool cover -func="${C_FILE}" | tail -1
-      - uses: codecov/codecov-action@v6
+      - uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: ${{ github.repository }}
@@ -34,8 +34,8 @@ jobs:
     name: lint
     runs-on: ubuntu-slim
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version-file: go.mod, cache: true }
       - uses: golangci/golangci-lint-action@v9
         with: { version: latest, args: --timeout=5m }
