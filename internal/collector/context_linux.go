@@ -48,15 +48,29 @@ func chromiumProcessType(args []string) bool {
 
 func applicationHint(process *collectedProcess) (string, string) {
 	args := process.detail.Arguments()
-	for _, arg := range args {
-		if strings.HasSuffix(arg, ".asar") && !strings.HasSuffix(arg, "/default_app.asar") {
-			if class := argumentValue(args, "--class"); class != "" {
-				return class, "package argument and --class"
-			}
-			return packageName(arg), "package argument: " + arg
+	if path := applicationPackage(args); path != "" {
+		if class := argumentValue(args, "--class"); class != "" {
+			return class, "package argument and --class"
 		}
+		return packageName(path), "package argument: " + path
 	}
 	return process.name, "executable/process name"
+}
+
+func applicationPackage(args []string) string {
+	path := argumentValue(args, "--app-path")
+	if path == "" {
+		for _, arg := range args {
+			if !strings.HasPrefix(arg, "-") && strings.HasSuffix(arg, ".asar") {
+				path = arg
+				break
+			}
+		}
+	}
+	if path == "" || !strings.HasSuffix(path, ".asar") || strings.HasSuffix(path, "/default_app.asar") {
+		return ""
+	}
+	return filepath.Clean(path)
 }
 
 func packageName(path string) string {
@@ -78,15 +92,17 @@ func processAncestors(p ProcDetail, processes map[int]*collectedProcess) []Proce
 	var ancestors []ProcessAncestor
 	seen := map[int]bool{p.PID: true}
 	parent := p.ParentPID
+	descendantStart := p.StartTime
 	for len(ancestors) < maxContextAncestors {
 		candidate := processes[parent]
-		if candidate == nil || seen[parent] || candidate.detail.StartTime == 0 || candidate.detail.StartTime > p.StartTime {
+		if candidate == nil || seen[parent] || candidate.detail.StartTime == 0 || candidate.detail.StartTime > descendantStart {
 			break
 		}
 		seen[parent] = true
 		a := candidate.detail
 		ancestors = append(ancestors, ProcessAncestor{PID: a.PID, StartTime: a.StartTime, Name: candidate.name, Executable: a.Executable, Cwd: a.Cwd})
 		parent = a.ParentPID
+		descendantStart = a.StartTime
 	}
 	return ancestors
 }
@@ -102,12 +118,15 @@ func inheritApplication(process *collectedProcess, processes map[int]*collectedP
 	ctx := process.detail.Context
 	for _, ancestor := range ctx.Ancestors {
 		parent := processes[ancestor.PID]
+		if contextBoundary(parent.name) || distinctSession(process.detail.Session, parent.detail.Session) {
+			break
+		}
 		if !sameExecutable(process, parent) {
 			continue // launchers and sandbox helpers can sit between matching executables
 		}
 		// Recompute from original arguments instead of an already inherited label.
 		application, source := applicationHint(parent)
-		if !inheritApplicationHint(ctx, application, source, parent.detail.PID) {
+		if !inheritApplicationHint(ctx, application, source, applicationPackage(parent.detail.Arguments()), parent.detail) {
 			break
 		}
 		if unhelpfulDirectory(ctx.ProjectDir) && parent.detail.Cwd != "" && !strings.HasPrefix(parent.detail.Cwd, "/proc/") {
@@ -116,16 +135,19 @@ func inheritApplication(process *collectedProcess, processes map[int]*collectedP
 	}
 }
 
-func inheritApplicationHint(ctx *ProcessContext, application, source string, pid int) bool {
-	currentPackage := strings.HasPrefix(ctx.ApplicationSource, "package argument")
-	parentPackage := strings.HasPrefix(source, "package argument")
-	if currentPackage && parentPackage && ctx.Application != application {
+func inheritApplicationHint(ctx *ProcessContext, application, source, key string, parent ProcDetail) bool {
+	if ctx.ApplicationKey != "" && key != "" && ctx.ApplicationKey != key {
 		return false
 	}
-	if !currentPackage || parentPackage {
-		ctx.Application, ctx.ApplicationSource, ctx.ApplicationPID = application, source, pid
+	if ctx.ApplicationKey == "" || key != "" {
+		ctx.Application, ctx.ApplicationSource = application, source
+		ctx.ApplicationPID, ctx.ApplicationStart, ctx.ApplicationKey = parent.PID, parent.StartTime, key
 	}
 	return true
+}
+
+func distinctSession(a, b *SessionInfo) bool {
+	return a != nil && b != nil && a.ID != "" && b.ID != "" && a.ID != b.ID
 }
 
 func setProcessOrigin(process *collectedProcess, processes map[int]*collectedProcess) {
@@ -244,7 +266,10 @@ func argumentValue(args []string, flag string) string {
 func initializeProcessContext(process *collectedProcess, root string, sockets map[string]string, orphan bool) {
 	p := &process.detail
 	application, source := applicationHint(process)
-	p.Context = &ProcessContext{Application: application, ApplicationPID: p.PID, ApplicationSource: source, ProjectDir: p.Cwd, ProjectSource: "cwd"}
+	p.Context = &ProcessContext{
+		Application: application, ApplicationPID: p.PID, ApplicationStart: p.StartTime,
+		ApplicationKey: applicationPackage(p.Arguments()), ApplicationSource: source, ProjectDir: p.Cwd, ProjectSource: "cwd",
+	}
 	if !orphan || !unhelpfulDirectory(p.Cwd) {
 		return
 	}

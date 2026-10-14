@@ -11,7 +11,12 @@ import (
 // by RSS descending. Presentation limits belong in the TUI.
 func buildAppStats(groups map[string]*appGroup, totalKB int64) []AppStat {
 	apps := make([]AppStat, 0, len(groups))
-	for name, g := range groups {
+	for id, g := range groups {
+		name := g.name
+		if name == "" {
+			name = id
+			id = "executable:" + id
+		}
 		pct := 0.0
 		if totalKB > 0 {
 			pct = float64(g.rssKB) / float64(totalKB) * 100
@@ -30,7 +35,10 @@ func buildAppStats(groups map[string]*appGroup, totalKB int64) []AppStat {
 			continue
 		}
 		apps = append(apps, AppStat{
+			GroupID:     id,
 			Name:        name,
+			Root:        g.root,
+			Directory:   g.directory,
 			RSSKB:       g.rssKB,
 			SwapKB:      g.swapKB,
 			SwapKnown:   swapKnown,
@@ -43,7 +51,7 @@ func buildAppStats(groups map[string]*appGroup, totalKB int64) []AppStat {
 	}
 
 	slices.SortFunc(apps, func(a, b AppStat) int {
-		return cmp.Or(cmp.Compare(b.RSSKB, a.RSSKB), cmp.Compare(a.Name, b.Name))
+		return cmp.Or(cmp.Compare(b.RSSKB, a.RSSKB), cmp.Compare(a.Name, b.Name), cmp.Compare(a.GroupID, b.GroupID))
 	})
 	return apps
 }

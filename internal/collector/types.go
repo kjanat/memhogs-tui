@@ -1,5 +1,5 @@
 // Package collector gathers point-in-time memory usage snapshots grouped by
-// application name.
+// application instance, executable, or process tree.
 //
 // Each [Snapshot] aggregates per-process RSS, swap, OOM scores, and system-wide
 // memory pressure into typed structures ready for display.
@@ -18,20 +18,29 @@ type Snapshot struct {
 	OOM           []OOMEntry // top OOM kill candidates sorted by score descending
 }
 
-// AppStat is aggregated memory for a named application group.
-// Name serves as both the display label and the grouping key.
+// AppStat aggregates one explicitly identified group. Name is a display label;
+// GroupID is the stable key for selection, history, and termination scope.
 type AppStat struct {
-	Name        string       // short name: exe basename + first non-flag arg (e.g. "node playwright-mcp")
-	RSSKB       int64        // total resident set size in KiB across all grouped processes
-	SwapKB      int64        // total swap usage in KiB
-	SwapKnown   bool         // true only when swap is available for every child
-	CommitKB    int64        // Windows process commit charge in KiB
-	CommitKnown bool         // true only when commit is available for every child
-	ProcCount   int          // number of processes in this group
-	MemPct      float64      // RSS as a percentage of total physical RAM
-	CPUPct      float64      // interval CPU usage; 100% is one logical CPU
-	CPUKnown    bool         // true only when CPU usage is available for every child
-	Children    []ProcDetail // individual processes, sorted by RSS descending
+	GroupID     string          // opaque identity, independent of display name and current membership
+	Name        string          // inferred application name or executable label; never an identity
+	Root        ProcessIdentity // observed root for application/tree grouping; zero for executable groups
+	Directory   string          // root workspace clue for display, never part of group identity
+	RSSKB       int64           // total resident set size in KiB across all grouped processes
+	SwapKB      int64           // total swap usage in KiB
+	SwapKnown   bool            // true only when swap is available for every child
+	CommitKB    int64           // Windows process commit charge in KiB
+	CommitKnown bool            // true only when commit is available for every child
+	ProcCount   int             // number of processes in this group
+	MemPct      float64         // RSS as a percentage of total physical RAM
+	CPUPct      float64         // interval CPU usage; 100% is one logical CPU
+	CPUKnown    bool            // true only when CPU usage is available for every child
+	Children    []ProcDetail    // individual processes, sorted by RSS descending
+}
+
+// ProcessIdentity identifies one process lifetime, including across PID reuse.
+type ProcessIdentity struct {
+	PID       int
+	StartTime uint64
 }
 
 // ProcDetail holds per-PID data for an individual process within an [AppStat] group.
@@ -62,6 +71,8 @@ type ProcDetail struct {
 type ProcessContext struct {
 	Application       string            // concrete application inferred from executable/package arguments
 	ApplicationPID    int               // process providing that application identity
+	ApplicationStart  uint64            // creation time of that application root
+	ApplicationKey    string            // normalized package path; independent of a friendly display name
 	ApplicationSource string            // evidence used for the label
 	ProjectDir        string            // observed workspace; may differ from Cwd
 	ProjectSource     string            // cwd, application ancestor, or repository socket
@@ -130,8 +141,11 @@ type OOMEntry struct {
 // appGroup accumulates per-process data while building [AppStat] entries.
 // Used internally by platform-specific collectApps implementations.
 type appGroup struct {
-	rssKB    int64
-	swapKB   int64
-	count    int
-	children []ProcDetail
+	name      string
+	root      ProcessIdentity
+	directory string
+	rssKB     int64
+	swapKB    int64
+	count     int
+	children  []ProcDetail
 }

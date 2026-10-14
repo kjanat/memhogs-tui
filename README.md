@@ -16,6 +16,37 @@ takes precedence over the positional interval, followed by the legacy `WATCH`
 environment variable and the default. Intervals must be positive whole seconds;
 invalid values and values that overflow a Go duration are rejected.
 
+On Linux the default is **application-instance grouping**. Processes whose
+observed executable family belongs to one application root share a group;
+separate roots stay separate even when they have the same name, executable,
+or workspace. Group identity uses the root PID and creation time. Inferred
+application names and workspace labels can change without changing that identity.
+For example, ChatGPT and Bitwarden using the same Electron binary have separate
+totals and termination scopes. Package paths, rather than friendly class names,
+establish package boundaries within those families.
+
+Choose the grouping explicitly when needed:
+
+```sh
+memhogs-tui --group application  # independent executable families (Linux default)
+memhogs-tui --group executable   # all collected processes using each executable
+memhogs-tui --group tree         # include different executables in an observed tree (Linux)
+```
+
+Application grouping follows observed same-executable ancestors, including across
+sandbox helpers, and respects distinct recorded sessions and package boundaries.
+It does not automatically include every helper running a different executable;
+tree grouping does that. Tree traversal stops at shells and session managers.
+Missing ancestry stays separate rather than being joined by a matching display
+name. If a root exits or becomes unreadable, its children can become separate
+groups on the next sample; no ownership is invented from past labels.
+On other supported platforms the default remains executable/process-name
+grouping; application and tree modes report their Linux requirement.
+
+Instance rows include their root PID and available workspace. The header shows
+the grouping mode, and termination confirmation states whether the selection is
+one process, one application instance, a tree, or a broad executable group.
+
 | Key                           | Action                                                                                                                |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `↑` / `k`, `↓` / `j`          | Move selection; the table scrolls to keep it visible                                                                  |
@@ -30,12 +61,16 @@ invalid values and values that overflow a Go duration are rejected.
 
 Sorting and searching cover every collected group above 1 MiB RSS or with
 nonzero swap or commit, and expanded
-groups include every collected child. Selection follows the group name or the
+groups include every collected child. Selection follows the group identity or the
 child's PID and creation time across refreshes. Termination captures the listed
 PIDs when the dialog opens, checks creation time before signaling each process,
 and reports failures for individual PIDs. Processes that join a group afterward
 are outside that captured scope. On Windows both termination keys use
 `TerminateProcess`.
+
+Creation-time checks reduce PID-reuse risk. On Linux, Go uses a pidfd when the
+kernel and runtime support it; other Unix platforms and Linux fallback paths can
+still have a race between checking identity and sending the signal.
 
 Memory values use binary units: KiB, MiB, and GiB. Group RSS adds each child's
 resident memory, including shared pages counted in multiple processes; it does

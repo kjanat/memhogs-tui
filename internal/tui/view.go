@@ -131,6 +131,7 @@ func (m Model) tableTitle() string {
 		sortLabel = m.secondaryLabel()
 	}
 	title := fmt.Sprintf(" Applications  sort:%s", sortLabel)
+	title += "  group:" + string(m.grouping)
 	if m.filter != "" {
 		title += "  /" + displayText(m.filter)
 	}
@@ -145,7 +146,7 @@ func (m Model) tableTitle() string {
 func tableLayout(rows []VisibleRow, w int) (nameW, barW int, maxRSS int64) {
 	nameW = 16
 	for _, r := range rows {
-		label := r.App.Name
+		label := appLabel(r.App)
 		if r.Kind == RowChild {
 			label = processSummary(r.App.Name, r.Child)
 		}
@@ -162,12 +163,12 @@ func tableLayout(rows []VisibleRow, w int) (nameW, barW int, maxRSS int64) {
 // renderGroupRow formats one aggregated application row, including the fold
 // indicator and the RSS bar scaled against maxRSS.
 func (m Model) renderGroupRow(a collector.AppStat, nameW, barW int, maxRSS int64, selected bool) string {
-	name := fitText(a.Name, nameW)
+	name := fitText(appLabel(a), nameW)
 
 	pfx := "  "
 	if a.ProcCount > 1 {
 		pfx = "▸ "
-		if m.expanded[a.Name] {
+		if m.expanded[a.GroupID] {
 			pfx = "▾ "
 		}
 	}
@@ -237,7 +238,7 @@ func (m Model) viewSide(rows []VisibleRow, width int) string {
 
 func (m Model) viewDetail(a collector.AppStat, width int) string {
 	rows := []string{
-		titleStyle.Width(width).Render("▸ " + displayText(a.Name)),
+		titleStyle.Width(width).Render("▸ " + appLabel(a)),
 		kvRow("RSS", fmt.Sprintf("%d MiB", a.RSSKB/1024), width),
 		kvRow(m.secondaryLabel(), m.appSecondaryText(a), width),
 		kvRow("Procs", fmt.Sprintf("%d", a.ProcCount), width),
@@ -246,7 +247,7 @@ func (m Model) viewDetail(a collector.AppStat, width int) string {
 	}
 
 	// Always reserve delta rows to prevent layout jitter
-	dRSS, dSwap := m.delta(a.Name)
+	dRSS, dSwap := m.delta(a.GroupID)
 	if dRSS != 0 {
 		rows = append(rows, fmtDelta("Δ RSS", dRSS, width))
 	} else {
@@ -445,7 +446,7 @@ func (m Model) viewKillModal() string {
 		rssKB = r.Child.RSSKB
 		cmd = killCmdStr([]collector.ProcDetail{r.Child}, m.killForce)
 	} else {
-		title = displayText(r.App.Name)
+		title = appLabel(r.App)
 		procs = len(r.App.Children)
 		rssKB = r.App.RSSKB
 		cmd = killCmdStr(r.App.Children, m.killForce)
@@ -453,6 +454,7 @@ func (m Model) viewKillModal() string {
 
 	content := fmt.Sprintf(
 		"%s  Kill %s?\n\n"+
+			"  Scope:   %s\n"+
 			"  Signal:  %s\n"+
 			"  Procs:   %d\n"+
 			"  RSS:     %d MiB\n"+
@@ -460,6 +462,7 @@ func (m Model) viewKillModal() string {
 			"  %s confirm    %s cancel",
 		lipgloss.NewStyle().Foreground(colorDanger).Bold(true).Render("⚠"),
 		titleStyle.Render(title),
+		killScope(r),
 		killSignalName(m.killForce), procs, rssKB/1024,
 		cmd,
 		helpKeyStyle.Render("y"),

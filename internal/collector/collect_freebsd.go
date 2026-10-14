@@ -123,7 +123,7 @@ var sizeofKinfoProc = int(unsafe.Sizeof(kinfoProc{}))
 
 // Collect gathers a complete memory [Snapshot] using FreeBSD sysctl.
 // PSI and OOM are not available on FreeBSD.
-func Collect() (*Snapshot, error) {
+func collect(_ Grouping) (*Snapshot, error) {
 	sys, err := readMemInfo()
 	if err != nil {
 		return nil, fmt.Errorf("meminfo: %w", err)

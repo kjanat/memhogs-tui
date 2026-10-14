@@ -1,0 +1,62 @@
+package tui
+
+import (
+	"cmp"
+	"fmt"
+	"strings"
+
+	"memhogs.kjanat.dev/internal/collector"
+)
+
+func appLabel(app collector.AppStat) string {
+	label := app.Name
+	if app.Root.PID != 0 {
+		label += fmt.Sprintf(" [%d]", app.Root.PID)
+		if app.Directory != "" && app.Directory != "~" && app.Directory != "/" {
+			label += " · " + projectLabel(app.Directory)
+		}
+	}
+	return displayText(label)
+}
+
+func killScope(row VisibleRow) string {
+	if row.Kind == RowChild {
+		return "single process"
+	}
+	mode, _, _ := strings.Cut(row.App.GroupID, ":")
+	switch collector.Grouping(mode) {
+	case collector.GroupApplication:
+		return fmt.Sprintf("application instance, root PID %d", row.App.Root.PID)
+	case collector.GroupTree:
+		return fmt.Sprintf("process tree, root PID %d", row.App.Root.PID)
+	default:
+		return "executable group, all listed instances"
+	}
+}
+
+func compareAppName(a, b collector.AppStat) int {
+	return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.GroupID, b.GroupID))
+}
+
+func findGroup(apps []collector.AppStat, id string) (collector.AppStat, bool) {
+	for _, app := range apps {
+		if app.GroupID == id {
+			return app, true
+		}
+	}
+	return collector.AppStat{}, false
+}
+
+func (m Model) pruneExpanded() {
+	active := make(map[string]bool)
+	if m.snap != nil {
+		for _, app := range m.snap.Apps {
+			active[app.GroupID] = true
+		}
+	}
+	for id := range m.expanded {
+		if !active[id] {
+			delete(m.expanded, id)
+		}
+	}
+}

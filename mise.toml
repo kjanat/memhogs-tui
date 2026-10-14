@@ -1,3 +1,13 @@
 [tools]
-go            = "1.27.2"
-golangci-lint = "latest"
+"github:kjanat/dprint" = "latest"
+"github:kjanat/runner" = "latest"
+go                     = "latest"
+golangci-lint          = "latest"
+
+[wrappers."memhogs-tui"]
+command = "run"
+args    = ["memhogs-tui"]
+
+[settings]
+idiomatic_version_file_ignore_minimum_versions = true
+idiomatic_version_file_enable_tools            = ["go"]

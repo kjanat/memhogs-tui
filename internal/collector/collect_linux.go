@@ -17,17 +17,17 @@ import (
 	"time"
 )
 
-// Collect gathers a complete memory [Snapshot] by reading /proc.
+// collect gathers a complete memory [Snapshot] by reading /proc.
 // It returns an error only if /proc/meminfo is unreadable;
 // individual process read failures are silently skipped.
-func Collect() (*Snapshot, error) {
+func collect(grouping Grouping) (*Snapshot, error) {
 	sys, err := readMemInfo()
 	if err != nil {
 		return nil, fmt.Errorf("meminfo: %w", err)
 	}
 	return &Snapshot{
 		At:     time.Now(),
-		Apps:   collectApps(sys.MemTotalKB),
+		Apps:   collectApps(sys.MemTotalKB, grouping),
 		System: sys,
 		PSI:    collectPSI(),
 		OOM:    collectOOM(),
@@ -76,22 +76,10 @@ type collectedProcess struct {
 	detail ProcDetail
 }
 
-func collectApps(totalKB int64) []AppStat {
+func collectApps(totalKB int64, grouping Grouping) []AppStat {
 	processes := scanProcesses("/proc")
 	enrichProcessContexts(processes, "/proc")
-	groups := make(map[string]*appGroup)
-	for _, process := range processes {
-		group, ok := groups[process.name]
-		if !ok {
-			group = &appGroup{}
-			groups[process.name] = group
-		}
-		group.rssKB += process.detail.RSSKB
-		group.swapKB += process.detail.SwapKB
-		group.count++
-		group.children = append(group.children, process.detail)
-	}
-	return buildAppStats(groups, totalKB)
+	return groupProcesses(processes, totalKB, grouping)
 }
 
 func scanProcesses(root string) map[int]*collectedProcess {

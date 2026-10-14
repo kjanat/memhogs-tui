@@ -4,12 +4,14 @@
 //
 // Usage:
 //
-//	memhogs-tui [-i SECONDS] [SECONDS]
+//	memhogs-tui [-i SECONDS] [--group application|executable|tree] [SECONDS]
 //
 // The flags are:
 //
 //	-i
 //	    Refresh interval in seconds (default: 3).
+//	-group
+//	    Group by application instance, executable, or process tree.
 //
 // A bare numeric argument is treated as the refresh interval.
 // The WATCH environment variable also sets the interval for backwards
@@ -26,6 +28,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"memhogs.kjanat.dev/internal/collector"
 	"memhogs.kjanat.dev/internal/tui"
 )
 
@@ -41,9 +44,10 @@ var (
 func main() {
 	showVersion := flag.Bool("v", false, "print version and exit")
 	interval := flag.Int("i", 3, "refresh interval (seconds)")
+	grouping := flag.String("group", string(collector.DefaultGrouping()), "group by application instance, executable, or tree (application/tree: Linux)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "memhogs %s (%s, %s)\n\n", version, commit, date)
-		fmt.Fprintf(os.Stderr, "Usage: memhogs [-i SECONDS] [SECONDS]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: memhogs [-i SECONDS] [--group application|executable|tree] [SECONDS]\n\n")
 		fmt.Fprintf(os.Stderr, "TUI memory monitor — grouped memory usage by application.\n\n")
 		flag.PrintDefaults()
 	}
@@ -52,6 +56,11 @@ func main() {
 	if *showVersion {
 		fmt.Printf("memhogs %s (commit %s, built %s)\n", version, commit, date)
 		return
+	}
+	mode := collector.Grouping(*grouping)
+	if err := collector.ValidateGrouping(mode); err != nil {
+		fmt.Fprintf(os.Stderr, "memhogs: %v\n", err)
+		os.Exit(2)
 	}
 
 	explicitInterval := false
@@ -69,6 +78,7 @@ func main() {
 
 	m := tui.New(tui.Config{
 		Interval: d,
+		Grouping: mode,
 	})
 
 	p := tea.NewProgram(m)

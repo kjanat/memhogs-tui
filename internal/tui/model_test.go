@@ -23,7 +23,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func testApp(name string, rss int64, pids ...int) collector.AppStat {
-	a := collector.AppStat{Name: name, RSSKB: rss, ProcCount: len(pids), SwapKnown: true}
+	a := collector.AppStat{GroupID: name, Name: name, RSSKB: rss, ProcCount: len(pids), SwapKnown: true}
 	for _, pid := range pids {
 		a.Children = append(a.Children, collector.ProcDetail{PID: pid, StartTime: 1, Cmdline: fmt.Sprintf("%s --worker %d", name, pid), RSSKB: rss / int64(len(pids)), SwapKnown: true})
 	}

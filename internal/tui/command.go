@@ -19,7 +19,7 @@ func (m Model) openCommand() Model {
 	if row.Kind == RowChild {
 		children = []collector.ProcDetail{row.Child}
 	}
-	var lines []string
+	lines := []string{"Selection: " + appLabel(row.App), "Scope: " + killScope(row), ""}
 	for _, child := range children {
 		lines = append(lines, fmt.Sprintf("PID %d · %s", child.PID, processSummary(row.App.Name, child)))
 		if session := child.Session; session != nil {
@@ -34,7 +34,7 @@ func (m Model) openCommand() Model {
 		lines = append(lines, directoryLabel+displayText(child.Cwd), "Terminal: "+displayText(child.Terminal), displayText(child.Cmdline), "")
 	}
 	m.commandText = strings.Join(lines, "\n")
-	m.commandTitle = displayText(row.App.Name)
+	m.commandTitle = appLabel(row.App)
 	m.command = viewport.New(viewport.WithWidth(max(m.width-4, 1)), viewport.WithHeight(max(m.height-4, 1)))
 	m.command.SoftWrap = true
 	m.command.SetContent(m.commandText)
@@ -54,6 +54,9 @@ func processContextLines(p collector.ProcDetail) []string {
 		lines = append(lines, fmt.Sprintf("Application: %s [PID %d]", displayText(ctx.Application), ctx.ApplicationPID),
 			"Application source: "+displayText(ctx.ApplicationSource),
 			"Context directory: "+displayText(ctx.ProjectDir), "Directory source: "+displayText(ctx.ProjectSource))
+		if ctx.ApplicationKey != "" {
+			lines = append(lines, "Application package: "+displayText(ctx.ApplicationKey))
+		}
 		if ctx.Origin != "" {
 			lines = append(lines, fmt.Sprintf("Launched via: %s [PID %d]", displayText(ctx.Origin), ctx.OriginPID))
 		}

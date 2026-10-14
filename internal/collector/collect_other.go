@@ -8,7 +8,7 @@ import (
 )
 
 // Collect is not implemented on this platform.
-func Collect() (*Snapshot, error) {
+func collect(_ Grouping) (*Snapshot, error) {
 	return nil, fmt.Errorf("memhogs: unsupported platform %s/%s", runtime.GOOS, runtime.GOARCH)
 }
 

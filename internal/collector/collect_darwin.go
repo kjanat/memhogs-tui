@@ -67,7 +67,7 @@ type xswUsage struct {
 
 // Collect gathers a complete memory [Snapshot] using macOS sysctl and
 // proc_pidinfo APIs. PSI and OOM are not available on macOS.
-func Collect() (*Snapshot, error) {
+func collect(_ Grouping) (*Snapshot, error) {
 	sys, err := readMemInfo()
 	if err != nil {
 		return nil, fmt.Errorf("meminfo: %w", err)

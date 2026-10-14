@@ -46,6 +46,7 @@ type Config struct {
 	// Interval is the time between snapshot refreshes.
 	// Zero defaults to 3 seconds.
 	Interval time.Duration
+	Grouping collector.Grouping
 }
 
 // Model holds the full application state: current and previous snapshots,
@@ -71,6 +72,7 @@ type Model struct {
 	height int
 
 	interval   time.Duration
+	grouping   collector.Grouping
 	collecting bool
 	err        error
 	status     string
@@ -107,17 +109,21 @@ func New(cfg Config) Model {
 	if d <= 0 {
 		d = 3 * time.Second
 	}
-	return Model{interval: d, collecting: true, signal: killProcess, input: ti, expanded: make(map[string]bool)}
+	grouping := cfg.Grouping
+	if grouping == "" {
+		grouping = collector.DefaultGrouping()
+	}
+	return Model{interval: d, grouping: grouping, collecting: true, signal: killProcess, input: ti, expanded: make(map[string]bool)}
 }
 
 // Init starts the first collection and tick.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(doCollect(), doTick(m.interval))
+	return tea.Batch(doCollect(m.grouping), doTick(m.interval))
 }
 
-func doCollect() tea.Cmd {
+func doCollect(grouping collector.Grouping) tea.Cmd {
 	return func() tea.Msg {
-		s, err := collector.Collect()
+		s, err := collector.CollectGrouped(grouping)
 		if err != nil {
 			return snapErr{e: err}
 		}
@@ -137,10 +143,10 @@ func doClearStatus() tea.Cmd {
 func doKill(row VisibleRow, force bool, signal func(collector.ProcDetail, bool) error) tea.Cmd {
 	return func() tea.Msg {
 		children := row.App.Children
-		name := row.App.Name
+		name := appLabel(row.App)
 		if row.Kind == RowChild {
 			children = []collector.ProcDetail{row.Child}
-			name = fmt.Sprintf("%s [%d]", name, row.Child.PID)
+			name = fmt.Sprintf("%s [%d]", row.App.Name, row.Child.PID)
 		}
 		var failures []error
 		for _, child := range children {
@@ -173,7 +179,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{doTick(m.interval)}
 		if !m.paused && !m.collecting {
 			m.collecting = true
-			cmds = append(cmds, doCollect())
+			cmds = append(cmds, doCollect(m.grouping))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -199,6 +205,7 @@ func (m Model) applySnapshot(s *collector.Snapshot) Model {
 	row, selected := m.currentRow(m.visibleRows(m.sortedApps()))
 	m.prevSnap = m.snap
 	m.snap = collector.WithCPU(s, m.prevSnap)
+	m.pruneExpanded()
 	m.err = nil
 	m = m.restoreSelection(row, selected)
 
@@ -336,7 +343,7 @@ func (m Model) currentRow(rows []VisibleRow) (VisibleRow, bool) {
 // toggleFold flips the expanded state of the highlighted multi-process group.
 func (m Model) toggleFold(rows []VisibleRow) Model {
 	if r, ok := m.currentRow(rows); ok && r.Kind == RowGroup && r.App.ProcCount > 1 {
-		m.expanded[r.App.Name] = !m.expanded[r.App.Name]
+		m.expanded[r.App.GroupID] = !m.expanded[r.App.GroupID]
 	}
 	return m
 }
@@ -344,7 +351,7 @@ func (m Model) toggleFold(rows []VisibleRow) Model {
 // foldGroup sets the expanded state of the highlighted multi-process group.
 func (m Model) foldGroup(rows []VisibleRow, open bool) Model {
 	if r, ok := m.currentRow(rows); ok && r.Kind == RowGroup && r.App.ProcCount > 1 {
-		m.expanded[r.App.Name] = open
+		m.expanded[r.App.GroupID] = open
 	}
 	return m
 }
@@ -358,9 +365,9 @@ func (m Model) collapseRow(rows []VisibleRow) Model {
 	}
 	switch r.Kind {
 	case RowGroup:
-		m.expanded[r.App.Name] = false
+		m.expanded[r.App.GroupID] = false
 	case RowChild:
-		m.expanded[r.App.Name] = false
+		m.expanded[r.App.GroupID] = false
 		for j := m.cursor - 1; j >= 0; j-- {
 			if rows[j].Kind == RowGroup {
 				m.cursor = j
@@ -388,23 +395,21 @@ func (m Model) sortedApps() []collector.AppStat {
 	switch m.sort {
 	case SortRSS:
 		slices.SortFunc(apps, func(a, b collector.AppStat) int {
-			return cmp.Or(cmp.Compare(b.RSSKB, a.RSSKB), cmp.Compare(a.Name, b.Name))
+			return cmp.Or(cmp.Compare(b.RSSKB, a.RSSKB), compareAppName(a, b))
 		})
 	case SortSwap:
 		slices.SortFunc(apps, func(a, b collector.AppStat) int {
-			return cmp.Or(compareMemory(m.appSecondary(a), m.appSecondaryKnown(a), m.appSecondary(b), m.appSecondaryKnown(b)), cmp.Compare(a.Name, b.Name))
+			return cmp.Or(compareMemory(m.appSecondary(a), m.appSecondaryKnown(a), m.appSecondary(b), m.appSecondaryKnown(b)), compareAppName(a, b))
 		})
 	case SortProcs:
 		slices.SortFunc(apps, func(a, b collector.AppStat) int {
-			return cmp.Or(cmp.Compare(b.ProcCount, a.ProcCount), cmp.Compare(a.Name, b.Name))
+			return cmp.Or(cmp.Compare(b.ProcCount, a.ProcCount), compareAppName(a, b))
 		})
 	case SortName:
-		slices.SortFunc(apps, func(a, b collector.AppStat) int {
-			return cmp.Compare(a.Name, b.Name)
-		})
+		slices.SortFunc(apps, compareAppName)
 	case SortCPU:
 		slices.SortFunc(apps, func(a, b collector.AppStat) int {
-			return cmp.Or(compareCPU(a.CPUPct, a.CPUKnown, b.CPUPct, b.CPUKnown), cmp.Compare(a.Name, b.Name))
+			return cmp.Or(compareCPU(a.CPUPct, a.CPUKnown, b.CPUPct, b.CPUKnown), compareAppName(a, b))
 		})
 	case sortModeCount: // sentinel, never an active mode; leave order as-is
 	}
@@ -412,25 +417,17 @@ func (m Model) sortedApps() []collector.AppStat {
 	return apps
 }
 
-// delta returns RSS/swap change for a named app vs previous snapshot.
-func (m Model) delta(name string) (rssKB, swapKB int64) {
+// delta compares one group identity; a new instance has no growth baseline.
+func (m Model) delta(id string) (rssKB, swapKB int64) {
 	if m.prevSnap == nil || m.snap == nil {
 		return 0, 0
 	}
-	var cr, cs, pr, ps int64
-	for _, a := range m.snap.Apps {
-		if a.Name == name {
-			cr, cs = a.RSSKB, a.SwapKB
-			break
-		}
+	current, currentOK := findGroup(m.snap.Apps, id)
+	previous, previousOK := findGroup(m.prevSnap.Apps, id)
+	if !currentOK || !previousOK {
+		return 0, 0
 	}
-	for _, a := range m.prevSnap.Apps {
-		if a.Name == name {
-			pr, ps = a.RSSKB, a.SwapKB
-			break
-		}
-	}
-	return cr - pr, cs - ps
+	return current.RSSKB - previous.RSSKB, current.SwapKB - previous.SwapKB
 }
 
 // RowKind tags a [VisibleRow] as either a group header or an expanded child.
@@ -458,7 +455,7 @@ func (m Model) visibleRows(apps []collector.AppStat) []VisibleRow {
 	rows := make([]VisibleRow, 0, len(apps)*2)
 	for i, app := range apps {
 		rows = append(rows, VisibleRow{Kind: RowGroup, App: app, AppIdx: i})
-		if m.expanded[app.Name] {
+		if m.expanded[app.GroupID] {
 			for j, child := range m.sortedChildren(app) {
 				rows = append(rows, VisibleRow{
 					Kind: RowChild, App: app, AppIdx: i,
@@ -487,7 +484,7 @@ func sameRow(a, b VisibleRow) bool {
 		return false
 	}
 	if a.Kind == RowGroup {
-		return a.App.Name == b.App.Name
+		return a.App.GroupID == b.App.GroupID
 	}
 	return a.Child.PID == b.Child.PID && a.Child.StartTime == b.Child.StartTime
 }
@@ -503,7 +500,7 @@ func (m Model) restoreSelection(selected VisibleRow, ok bool) Model {
 		}
 		if selected.Kind == RowChild {
 			for i, row := range rows {
-				if row.Kind == RowGroup && row.App.Name == selected.App.Name {
+				if row.Kind == RowGroup && row.App.GroupID == selected.App.GroupID {
 					m.cursor = i
 					return m
 				}
@@ -557,7 +554,7 @@ func (m Model) appSecondaryKnown(a collector.AppStat) bool {
 }
 
 func matchesFilter(a collector.AppStat, query string) bool {
-	if strings.Contains(strings.ToLower(a.Name), query) {
+	if strings.Contains(strings.ToLower(a.Name), query) || strings.Contains(strings.ToLower(a.Directory), query) {
 		return true
 	}
 	for _, child := range a.Children {

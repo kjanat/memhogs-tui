@@ -161,3 +161,34 @@ func TestUnrelatedTypeFlagDoesNotImplyChromium(t *testing.T) {
 		t.Fatal("an unrelated --type flag was treated as Chromium evidence")
 	}
 }
+
+func TestApplicationPackageUsesCanonicalEvidence(t *testing.T) {
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"electron", "/apps/chat/resources/app.asar"}, "/apps/chat/resources/app.asar"},
+		{[]string{"electron", "--app-path=/apps/chat/resources/../resources/app.asar"}, "/apps/chat/resources/app.asar"},
+		{[]string{"electron", "--app-path", "/apps/path with spaces/app.asar"}, "/apps/path with spaces/app.asar"},
+		{[]string{"electron", "/apps/default_app.asar"}, ""},
+		{[]string{"tool", "--config=/apps/other.asar"}, ""},
+		{[]string{"tool", "--app-path"}, ""},
+	} {
+		if got := applicationPackage(tt.args); got != tt.want {
+			t.Fatalf("%v: got %q want %q", tt.args, got, tt.want)
+		}
+	}
+}
+
+func TestAncestorAgeIsCheckedAtEveryParentEdge(t *testing.T) {
+	child := contextProcess(30, 20, "worker", "/bin/worker", "~")
+	parent := contextProcess(20, 10, "worker", "/bin/worker", "~")
+	grandparent := contextProcess(10, 1, "worker", "/bin/worker", "~")
+	child.detail.StartTime, parent.detail.StartTime, grandparent.detail.StartTime = 100, 50, 75
+	processes := map[int]*collectedProcess{30: child, 20: parent, 10: grandparent}
+	enrichProcessContexts(processes, t.TempDir())
+	ctx := child.detail.Context
+	if len(ctx.Ancestors) != 1 || ctx.ApplicationPID != 20 || ctx.ApplicationStart != 50 {
+		t.Fatalf("reused grandparent PID changed ownership: %+v", ctx)
+	}
+}

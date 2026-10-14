@@ -46,7 +46,7 @@ type processMemoryCounters struct {
 
 // Collect gathers a complete memory [Snapshot] using Windows APIs.
 // PSI and OOM are not available on Windows and will be nil/empty.
-func Collect() (*Snapshot, error) {
+func collect(_ Grouping) (*Snapshot, error) {
 	sys, err := readMemInfo()
 	if err != nil {
 		return nil, fmt.Errorf("meminfo: %w", err)
