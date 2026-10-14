@@ -14,6 +14,7 @@ type keyMap struct {
 	Kill      key.Binding
 	ForceKill key.Binding
 	Help      key.Binding
+	Command   key.Binding
 	Quit      key.Binding
 	Confirm   key.Binding
 	Cancel    key.Binding
@@ -63,6 +64,10 @@ var keys = keyMap{
 	Help: key.NewBinding(
 		key.WithKeys("?"),
 		key.WithHelp("?", "help"),
+	),
+	Command: key.NewBinding(
+		key.WithKeys("c"),
+		key.WithHelp("c", "full command"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),

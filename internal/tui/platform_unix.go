@@ -5,15 +5,30 @@ package tui
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"syscall"
+
+	"memhogs.kjanat.dev/internal/collector"
 )
 
 // killProcess sends SIGTERM or SIGKILL to a single PID using the standard
 // library's os.FindProcess + Signal.
-func killProcess(pid int, force bool) error {
-	p, err := os.FindProcess(pid)
+func killProcess(process collector.ProcDetail, force bool) error {
+	if process.PID <= 0 || process.StartTime == 0 {
+		return fmt.Errorf("process identity unavailable")
+	}
+	p, err := os.FindProcess(process.PID)
 	if err != nil {
 		return err
+	}
+	defer func() { _ = p.Release() }()
+	start, err := collector.ProcessStartTime(process.PID)
+	if err != nil {
+		return err
+	}
+	if start != process.StartTime {
+		return fmt.Errorf("process identity changed; refusing signal")
 	}
 	if force {
 		return p.Kill()
@@ -29,25 +44,15 @@ func killSignalName(force bool) string {
 	return "SIGTERM"
 }
 
-// killCmdStr returns the shell command shown in the kill modal.
-func killCmdStr(name string, force bool) string {
+// killCmdStr lists precisely the captured PIDs in the confirmation.
+func killCmdStr(children []collector.ProcDetail, force bool) string {
 	sig := "TERM"
 	if force {
 		sig = "KILL"
 	}
-	return fmt.Sprintf("pkill -%s -x -- %q", sig, name)
-}
-
-// killCmdStrPID returns the shell command shown when killing a single process.
-func killCmdStrPID(pid int, force bool) string {
-	sig := "TERM"
-	if force {
-		sig = "KILL"
+	pids := make([]string, 0, len(children))
+	for _, child := range children {
+		pids = append(pids, strconv.Itoa(child.PID))
 	}
-	return fmt.Sprintf("kill -%s %d", sig, pid)
-}
-
-// rescueCmdStr returns the emergency kill command shown in the sidebar.
-func rescueCmdStr(name string) string {
-	return fmt.Sprintf("pkill -x -- %q", name)
+	return "kill -" + sig + " " + strings.Join(pids, " ")
 }

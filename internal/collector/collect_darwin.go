@@ -102,6 +102,7 @@ func readMemInfo() (SystemInfo, error) {
 		info.SwapTotalKB = int64(sw.Total / 1024)
 		info.SwapFreeKB = int64(sw.Avail / 1024)
 		info.SwapUsedKB = int64(sw.Used / 1024)
+		info.SwapKnown = true
 	}
 
 	return info, nil
@@ -136,10 +137,11 @@ func collectApps(totalKB int64) []AppStat {
 		g.swapKB += swap
 		g.count++
 		g.children = append(g.children, ProcDetail{
-			PID:     pid,
-			Cmdline: cmdlineDisplay(pid),
-			RSSKB:   rss,
-			SwapKB:  swap,
+			PID:       pid,
+			StartTime: uint64(kp.Proc.P_starttime.Sec)*1000000 + uint64(kp.Proc.P_starttime.Usec),
+			Cmdline:   cmdlineDisplay(pid),
+			RSSKB:     rss,
+			SwapKB:    swap,
 		})
 	}
 
@@ -225,7 +227,11 @@ func cmdlineDisplay(pid int) string {
 	if len(args) == 0 {
 		return ""
 	}
-	args[0] = filepath.Base(args[0])
+	// Some processes rewrite all argv into a single string. Applying Base
+	// to that string would discard flags before its final path separator.
+	if !strings.ContainsAny(args[0], " \t\r\n") {
+		args[0] = filepath.Base(args[0])
+	}
 	s := strings.Join(args, " ")
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		s = strings.ReplaceAll(s, home, "~")
@@ -276,4 +282,13 @@ func procArgs(pid int) []string {
 		rest = rest[end+1:]
 	}
 	return args
+}
+
+// ProcessStartTime returns the macOS process creation time in microseconds.
+func ProcessStartTime(pid int) (uint64, error) {
+	kp, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if err != nil {
+		return 0, err
+	}
+	return uint64(kp.Proc.P_starttime.Sec)*1000000 + uint64(kp.Proc.P_starttime.Usec), nil
 }

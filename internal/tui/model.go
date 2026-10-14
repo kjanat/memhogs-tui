@@ -8,6 +8,7 @@ package tui
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
 	"memhogs.kjanat.dev/internal/collector"
@@ -26,17 +28,16 @@ type SortMode int
 
 // Sort modes for the application table, in the order the "s" key cycles them.
 const (
-	SortRSS    SortMode = iota // resident set size
-	SortSwap                   // swap usage
-	SortProcs                  // process count
-	SortMemPct                 // percentage of total RAM
-	SortName                   // alphabetical
+	SortRSS   SortMode = iota // resident set size
+	SortSwap                  // swap usage
+	SortProcs                 // process count
+	SortName                  // alphabetical
 	sortModeCount
 )
 
 // String returns the short label shown in the table header.
 func (s SortMode) String() string {
-	return [...]string{"RSS", "Swap", "Procs", "Mem%", "Name"}[s]
+	return [...]string{"RSS", "Swap", "Procs", "Name"}[s]
 }
 
 // Config holds startup parameters for [New].
@@ -53,6 +54,7 @@ type Model struct {
 	prevSnap *collector.Snapshot
 
 	cursor    int
+	offset    int
 	sort      SortMode
 	filter    string
 	filtering bool
@@ -60,17 +62,24 @@ type Model struct {
 	expanded  map[string]bool // which groups are unfolded
 
 	killConfirm bool
+	killTarget  VisibleRow
+	signal      func(collector.ProcDetail, bool) error
 	killForce   bool // false = graceful, true = force kill
 
 	width  int
 	height int
 
-	interval time.Duration
-	err      error
-	status   string
+	interval   time.Duration
+	collecting bool
+	err        error
+	status     string
 
-	input textinput.Model
-	help  bool
+	input        textinput.Model
+	help         bool
+	commandOpen  bool
+	commandTitle string
+	commandText  string
+	command      viewport.Model
 }
 
 type (
@@ -94,10 +103,10 @@ func New(cfg Config) Model {
 	ti.CharLimit = 64
 
 	d := cfg.Interval
-	if d == 0 {
+	if d <= 0 {
 		d = 3 * time.Second
 	}
-	return Model{interval: d, input: ti, expanded: make(map[string]bool)}
+	return Model{interval: d, collecting: true, signal: killProcess, input: ti, expanded: make(map[string]bool)}
 }
 
 // Init starts the first collection and tick.
@@ -123,23 +132,22 @@ func doClearStatus() tea.Cmd {
 	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return clearStatus{} })
 }
 
-// doKill kills the process(es) the cursor row points at: a single PID for a
-// RowChild, or every PID in the group for a RowGroup header.
-func doKill(row VisibleRow, force bool) tea.Cmd {
+// doKill signals only the captured processes, never a refreshed group.
+func doKill(row VisibleRow, force bool, signal func(collector.ProcDetail, bool) error) tea.Cmd {
 	return func() tea.Msg {
-		switch row.Kind {
-		case RowChild:
-			err := killProcess(row.Child.PID, force)
-			return killDone{name: fmt.Sprintf("%s [%d]", row.App.Name, row.Child.PID), err: err}
-		default:
-			var firstErr error
-			for _, c := range row.App.Children {
-				if err := killProcess(c.PID, force); err != nil && firstErr == nil {
-					firstErr = err
-				}
-			}
-			return killDone{name: row.App.Name, err: firstErr}
+		children := row.App.Children
+		name := row.App.Name
+		if row.Kind == RowChild {
+			children = []collector.ProcDetail{row.Child}
+			name = fmt.Sprintf("%s [%d]", name, row.Child.PID)
 		}
+		var failures []error
+		for _, child := range children {
+			if err := signal(child, force); err != nil {
+				failures = append(failures, fmt.Errorf("PID %d: %w", child.PID, err))
+			}
+		}
+		return killDone{name: name, err: errors.Join(failures...)}
 	}
 }
 
@@ -149,16 +157,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.command.SetWidth(max(m.width-4, 1))
+		m.command.SetHeight(max(m.height-4, 1))
 
 	case snapMsg:
+		m.collecting = false
 		m = m.applySnapshot(msg.s)
 
 	case snapErr:
+		m.collecting = false
 		m.err = msg.e
 
 	case tick:
 		cmds := []tea.Cmd{doTick(m.interval)}
-		if !m.paused {
+		if !m.paused && !m.collecting {
+			m.collecting = true
 			cmds = append(cmds, doCollect())
 		}
 		return m, tea.Batch(cmds...)
@@ -171,21 +184,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, doClearStatus()
 
 	case tea.KeyPressMsg:
-		return m.handleKey(msg)
+		next, cmd := m.handleKey(msg)
+		m = next.(Model)
+		return m.adjustViewport(), cmd
 	}
 
-	return m, nil
+	return m.adjustViewport(), nil
 }
 
 // applySnapshot stores a fresh snapshot, retaining the previous one for deltas,
 // and clamps the cursor if the new row count shrank.
 func (m Model) applySnapshot(s *collector.Snapshot) Model {
+	row, selected := m.currentRow(m.visibleRows(m.sortedApps()))
 	m.prevSnap = m.snap
 	m.snap = s
 	m.err = nil
-	if rows := m.visibleRows(m.sortedApps()); m.cursor >= len(rows) {
-		m.cursor = max(0, len(rows)-1)
-	}
+	m = m.restoreSelection(row, selected)
+
 	return m
 }
 
@@ -198,6 +213,18 @@ func killStatus(msg killDone) string {
 }
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+	if m.commandOpen {
+		if msg.String() == "esc" || msg.String() == "c" || msg.String() == "q" {
+			m.commandOpen = false
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.command, cmd = m.command.Update(msg)
+		return m, cmd
+	}
 	if m.filtering {
 		return m.handleFilterKey(msg)
 	}
@@ -209,7 +236,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleFilterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
-	case key.Matches(msg, keys.Cancel):
+	case msg.String() == "esc":
 		m.filtering = false
 		m.filter = ""
 		m.input.Reset()
@@ -232,12 +259,12 @@ func (m Model) handleKillKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.Confirm):
 		m.killConfirm = false
-		rows := m.visibleRows(m.sortedApps())
-		if m.cursor < len(rows) {
-			return m, doKill(rows[m.cursor], m.killForce)
-		}
+		target := m.killTarget
+		m.killTarget = VisibleRow{}
+		return m, doKill(target, m.killForce, m.signal)
 	case key.Matches(msg, keys.Cancel):
 		m.killConfirm = false
+		m.killTarget = VisibleRow{}
 	}
 	return m, nil
 }
@@ -254,7 +281,9 @@ func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.input.SetValue(m.filter)
 		return m, m.input.Focus()
 	case key.Matches(msg, keys.Sort):
+		row, ok := m.currentRow(m.visibleRows(m.sortedApps()))
 		m.sort = (m.sort + 1) % sortModeCount
+		m = m.restoreSelection(row, ok)
 	case key.Matches(msg, keys.Pause):
 		m.paused = !m.paused
 		m.status = ""
@@ -262,11 +291,13 @@ func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = "⏸ paused"
 		}
 	case key.Matches(msg, keys.Kill):
-		m.killConfirm, m.killForce = true, false
+		m = m.beginKill(false)
 	case key.Matches(msg, keys.ForceKill):
-		m.killConfirm, m.killForce = true, true
+		m = m.beginKill(true)
 	case key.Matches(msg, keys.Help):
 		m.help = !m.help
+	case key.Matches(msg, keys.Command):
+		m = m.openCommand()
 	default:
 		return m.handleNavKey(msg), nil
 	}
@@ -350,27 +381,21 @@ func (m Model) sortedApps() []collector.AppStat {
 
 	if m.filter != "" {
 		q := strings.ToLower(m.filter)
-		apps = slices.DeleteFunc(apps, func(a collector.AppStat) bool {
-			return !strings.Contains(strings.ToLower(a.Name), q)
-		})
+		apps = slices.DeleteFunc(apps, func(a collector.AppStat) bool { return !matchesFilter(a, q) })
 	}
 
 	switch m.sort {
 	case SortRSS:
 		slices.SortFunc(apps, func(a, b collector.AppStat) int {
-			return cmp.Compare(b.RSSKB, a.RSSKB)
+			return cmp.Or(cmp.Compare(b.RSSKB, a.RSSKB), cmp.Compare(a.Name, b.Name))
 		})
 	case SortSwap:
 		slices.SortFunc(apps, func(a, b collector.AppStat) int {
-			return cmp.Compare(b.SwapKB, a.SwapKB)
+			return cmp.Or(compareMemory(m.appSecondary(a), m.appSecondaryKnown(a), m.appSecondary(b), m.appSecondaryKnown(b)), cmp.Compare(a.Name, b.Name))
 		})
 	case SortProcs:
 		slices.SortFunc(apps, func(a, b collector.AppStat) int {
-			return cmp.Compare(b.ProcCount, a.ProcCount)
-		})
-	case SortMemPct:
-		slices.SortFunc(apps, func(a, b collector.AppStat) int {
-			return cmp.Compare(b.MemPct, a.MemPct)
+			return cmp.Or(cmp.Compare(b.ProcCount, a.ProcCount), cmp.Compare(a.Name, b.Name))
 		})
 	case SortName:
 		slices.SortFunc(apps, func(a, b collector.AppStat) int {
@@ -429,14 +454,120 @@ func (m Model) visibleRows(apps []collector.AppStat) []VisibleRow {
 	for i, app := range apps {
 		rows = append(rows, VisibleRow{Kind: RowGroup, App: app, AppIdx: i})
 		if m.expanded[app.Name] {
-			limit := min(len(app.Children), 15)
-			for j := range limit {
+			for j, child := range m.sortedChildren(app) {
 				rows = append(rows, VisibleRow{
 					Kind: RowChild, App: app, AppIdx: i,
-					Child: app.Children[j], ChildIdx: j,
+					Child: child, ChildIdx: j,
 				})
 			}
 		}
 	}
 	return rows
+}
+
+// beginKill copies the complete intended scope before any refresh can change it.
+func (m Model) beginKill(force bool) Model {
+	row, ok := m.currentRow(m.visibleRows(m.sortedApps()))
+	if !ok {
+		return m
+	}
+	row.App.Children = slices.Clone(row.App.Children)
+	m.killTarget = row
+	m.killConfirm, m.killForce = true, force
+	return m
+}
+
+func sameRow(a, b VisibleRow) bool {
+	if a.Kind != b.Kind {
+		return false
+	}
+	if a.Kind == RowGroup {
+		return a.App.Name == b.App.Name
+	}
+	return a.Child.PID == b.Child.PID && a.Child.StartTime == b.Child.StartTime
+}
+
+func (m Model) restoreSelection(selected VisibleRow, ok bool) Model {
+	rows := m.visibleRows(m.sortedApps())
+	if ok {
+		for i, row := range rows {
+			if sameRow(row, selected) {
+				m.cursor = i
+				return m
+			}
+		}
+		if selected.Kind == RowChild {
+			for i, row := range rows {
+				if row.Kind == RowGroup && row.App.Name == selected.App.Name {
+					m.cursor = i
+					return m
+				}
+			}
+		}
+	}
+	m.cursor = min(max(m.cursor, 0), max(len(rows)-1, 0))
+	return m
+}
+
+func viewportStart(cursor, offset, count, capacity int) int {
+	if capacity <= 0 {
+		return 0
+	}
+	offset = min(max(offset, 0), max(count-capacity, 0))
+	if cursor < offset {
+		return max(cursor, 0)
+	}
+	if cursor >= offset+capacity {
+		return max(cursor-capacity+1, 0)
+	}
+	return offset
+}
+
+func (m Model) adjustViewport() Model {
+	rows := m.visibleRows(m.sortedApps())
+	m.cursor = min(max(m.cursor, 0), max(len(rows)-1, 0))
+	m.offset = viewportStart(m.cursor, m.offset, len(rows), m.height-4)
+	return m
+}
+
+func (m Model) secondaryLabel() string {
+	if m.snap != nil && m.snap.ProcessCommit {
+		return "Commit"
+	}
+	return "Swap"
+}
+
+func (m Model) appSecondary(a collector.AppStat) int64 {
+	if m.snap != nil && m.snap.ProcessCommit {
+		return a.CommitKB
+	}
+	return a.SwapKB
+}
+
+func (m Model) appSecondaryKnown(a collector.AppStat) bool {
+	if m.snap != nil && m.snap.ProcessCommit {
+		return a.CommitKnown
+	}
+	return a.SwapKnown
+}
+
+func matchesFilter(a collector.AppStat, query string) bool {
+	if strings.Contains(strings.ToLower(a.Name), query) {
+		return true
+	}
+	for _, child := range a.Children {
+		if strings.Contains(strings.ToLower(child.Cmdline), query) || strings.Contains(strings.ToLower(child.Cwd), query) || sessionMatches(child.Session, query) {
+			return true
+		}
+	}
+	return false
+}
+
+func sessionMatches(session *collector.SessionInfo, query string) bool {
+	if session == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(session.Name), query) ||
+		strings.Contains(strings.ToLower(session.ID), query) ||
+		strings.Contains(strings.ToLower(session.ProjectDir), query)
 }

@@ -52,9 +52,10 @@ func Collect() (*Snapshot, error) {
 		return nil, fmt.Errorf("meminfo: %w", err)
 	}
 	return &Snapshot{
-		At:     time.Now(),
-		Apps:   collectApps(sys.MemTotalKB),
-		System: sys,
+		At:            time.Now(),
+		Apps:          collectApps(sys.MemTotalKB),
+		System:        sys,
+		ProcessCommit: true,
 	}, nil
 }
 
@@ -66,13 +67,13 @@ func readMemInfo() (SystemInfo, error) {
 		return SystemInfo{}, fmt.Errorf("GlobalMemoryStatusEx: %w", err)
 	}
 	info := SystemInfo{
-		MemTotalKB:     int64(ms.TotalPhys / 1024),
-		MemAvailableKB: int64(ms.AvailPhys / 1024),
-		SwapTotalKB:    int64(ms.TotalPageFile / 1024),
-		SwapFreeKB:     int64(ms.AvailPageFile / 1024),
+		MemTotalKB:        int64(ms.TotalPhys / 1024),
+		MemAvailableKB:    int64(ms.AvailPhys / 1024),
+		CommitLimitKB:     int64(ms.TotalPageFile / 1024),
+		CommitAvailableKB: int64(ms.AvailPageFile / 1024),
+		CommitKnown:       true,
 	}
 	info.MemUsedKB = info.MemTotalKB - info.MemAvailableKB
-	info.SwapUsedKB = info.SwapTotalKB - info.SwapFreeKB
 	return info, nil
 }
 
@@ -102,7 +103,7 @@ func collectApps(totalKB int64) []AppStat {
 
 		exe := windows.UTF16ToString(pe.ExeFile[:])
 		name := groupName(exe)
-		rss, swap := procMem(pid)
+		rss, commitKB, start, known := procMem(pid)
 
 		g, ok := groups[name]
 		if !ok {
@@ -110,13 +111,14 @@ func collectApps(totalKB int64) []AppStat {
 			groups[name] = g
 		}
 		g.rssKB += rss
-		g.swapKB += swap
 		g.count++
 		g.children = append(g.children, ProcDetail{
-			PID:     int(pid),
-			Cmdline: exe,
-			RSSKB:   rss,
-			SwapKB:  swap,
+			PID:         int(pid),
+			Cmdline:     exe,
+			RSSKB:       rss,
+			CommitKB:    commitKB,
+			CommitKnown: known,
+			StartTime:   start,
 		})
 
 		if windows.Process32Next(snap, &pe) != nil {
@@ -136,14 +138,14 @@ func groupName(exe string) string {
 	return strings.ToLower(name)
 }
 
-// procMem reads WorkingSetSize (≈RSS) and PagefileUsage (≈swap/commit) for a PID.
-func procMem(pid uint32) (rssKB, swapKB int64) {
+// procMem reads working set, commit charge, and creation time for a PID.
+func procMem(pid uint32) (rssKB, commitKB int64, start uint64, known bool) {
 	h, err := windows.OpenProcess(
 		windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_VM_READ,
 		false, pid,
 	)
 	if err != nil {
-		return 0, 0
+		return 0, 0, 0, false
 	}
 	defer windows.CloseHandle(h)
 
@@ -155,7 +157,26 @@ func procMem(pid uint32) (rssKB, swapKB int64) {
 		uintptr(pmc.CB),
 	)
 	if r == 0 {
-		return 0, 0
+		return 0, 0, 0, false
 	}
-	return int64(pmc.WorkingSetSize / 1024), int64(pmc.PagefileUsage / 1024)
+	start, err = processStartTimeHandle(h)
+	return int64(pmc.WorkingSetSize / 1024), int64(pmc.PagefileUsage / 1024), start, err == nil
+}
+
+// ProcessStartTime returns the Windows process creation time.
+func ProcessStartTime(pid int) (uint64, error) {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(h)
+	return processStartTimeHandle(h)
+}
+
+func processStartTimeHandle(h windows.Handle) (uint64, error) {
+	var creation, exit, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(h, &creation, &exit, &kernel, &user); err != nil {
+		return 0, err
+	}
+	return uint64(creation.HighDateTime)<<32 | uint64(creation.LowDateTime), nil
 }

@@ -19,6 +19,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -53,22 +54,21 @@ func main() {
 		return
 	}
 
-	// Positional arg as interval: memhogs 5
-	if flag.NArg() > 0 {
-		if n, err := strconv.Atoi(flag.Arg(0)); err == nil {
-			*interval = n
+	explicitInterval := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "i" {
+			explicitInterval = true
 		}
-	}
-
-	// WATCH env var for backwards compat
-	if v, ok := os.LookupEnv("WATCH"); ok {
-		if n, err := strconv.Atoi(v); err == nil {
-			*interval = n
-		}
+	})
+	watch, watchSet := os.LookupEnv("WATCH")
+	d, err := resolveInterval(*interval, explicitInterval, flag.Args(), watch, watchSet)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "memhogs: %v\n", err)
+		os.Exit(2)
 	}
 
 	m := tui.New(tui.Config{
-		Interval: time.Duration(*interval) * time.Second,
+		Interval: d,
 	})
 
 	p := tea.NewProgram(m)
@@ -76,4 +76,27 @@ func main() {
 		fmt.Fprintf(os.Stderr, "memhogs: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// resolveInterval gives explicit -i precedence over a positional interval,
+// then WATCH, then the default. Only the selected source is interpreted.
+func resolveInterval(seconds int, explicit bool, args []string, watch string, watchSet bool) (time.Duration, error) {
+	if len(args) > 1 {
+		return 0, fmt.Errorf("expected at most one interval argument")
+	}
+	source := "-i"
+	value := strconv.Itoa(seconds)
+	if !explicit {
+		switch {
+		case len(args) == 1:
+			source, value = "interval argument", args[0]
+		case watchSet:
+			source, value = "WATCH", watch
+		}
+	}
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || n <= 0 || n > math.MaxInt64/int64(time.Second) {
+		return 0, fmt.Errorf("%s must be a positive whole number of seconds within the supported duration range", source)
+	}
+	return time.Duration(n) * time.Second, nil
 }

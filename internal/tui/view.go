@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	lgtable "charm.land/lipgloss/v2/table"
+	"github.com/charmbracelet/x/ansi"
 
 	"memhogs.kjanat.dev/internal/collector"
 )
@@ -17,7 +18,17 @@ import (
 // Kill-confirm and help modals replace the entire screen when active.
 func (m Model) View() tea.View {
 	if m.width == 0 || m.snap == nil {
-		v := tea.NewView("  Collecting…")
+		content := "  Collecting…"
+		if m.err != nil {
+			content = "  Collection failed: " + displayText(m.err.Error()) + "\n  q quit • retrying each interval"
+		}
+		v := tea.NewView(content)
+		v.AltScreen = true
+		return v
+	}
+
+	if m.commandOpen {
+		v := tea.NewView(m.viewCommand())
 		v.AltScreen = true
 		return v
 	}
@@ -27,7 +38,7 @@ func (m Model) View() tea.View {
 
 	// Layout: sidebar appears at ≥90 cols
 	hasSide := m.width >= 90
-	mainH := m.height - 1 // 1 for status bar
+	mainH := max(m.height-1, 0) // 1 for status bar
 
 	var sideW, tableW int
 	if hasSide {
@@ -39,12 +50,12 @@ func (m Model) View() tea.View {
 	}
 
 	table := m.viewTable(rows, tableW, mainH)
-	tablePane := lipgloss.NewStyle().Width(tableW).Height(mainH).Render(table)
+	tablePane := lipgloss.NewStyle().Width(tableW).Height(mainH).MaxHeight(mainH).Render(table)
 
 	var body string
 	if hasSide {
 		side := m.viewSide(rows, sideW-2)
-		sidePane := sidebarStyle.Width(sideW).Height(mainH).Render(side)
+		sidePane := sidebarStyle.Width(sideW).Height(mainH).MaxHeight(mainH).Render(side)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, tablePane, sidePane)
 	} else {
 		body = tablePane
@@ -55,10 +66,10 @@ func (m Model) View() tea.View {
 
 	// Modal overlays replace the whole screen
 	if m.killConfirm {
-		modal := m.viewKillModal(rows)
+		modal := m.viewKillModal()
 		out = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
 	}
-	if m.help {
+	if m.help && !m.killConfirm {
 		modal := m.viewHelpModal()
 		out = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
 	}
@@ -69,8 +80,8 @@ func (m Model) View() tea.View {
 }
 
 // tableFixedW is the non-name, non-bar column budget:
-// prefix(2) + rss(8) + swap(8) + procs(6) + pct(7) + gap(1).
-const tableFixedW = 2 + 8 + 8 + 6 + 7 + 1
+// prefix(2) + rss(8) + swap(8) + procs/PID(10) + pct(7) + gap(1).
+const tableFixedW = 2 + 8 + 8 + 10 + 7 + 1
 
 func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 	nameW, barW, maxRSS := tableLayout(rows, w)
@@ -79,23 +90,22 @@ func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 	b.WriteString(titleStyle.Render(m.tableTitle()))
 	b.WriteByte('\n')
 
-	hdr := fmt.Sprintf("  %-*s %7s %7s %5s %6s", nameW, "NAME", "RSS", "SWAP", "PROCS", "MEM%")
+	hdr := fmt.Sprintf("  %-*s %7s %7s %9s %6s", nameW, "NAME / ROLE", "RSS", strings.ToUpper(m.secondaryLabel()), "PROCS/PID", "MEM%")
 	b.WriteString(headerStyle.Render(hdr))
 	b.WriteByte('\n')
 	b.WriteString(mutedStyle.Render(strings.Repeat("─", w)))
 	b.WriteByte('\n')
 
 	maxVisible := max(h-3, 0)
-	for i, r := range rows {
-		if i >= maxVisible {
-			break
-		}
+	start := viewportStart(m.cursor, m.offset, len(rows), maxVisible)
+	for i := start; i < min(start+maxVisible, len(rows)); i++ {
+		r := rows[i]
 		selected := i == m.cursor
 		switch r.Kind {
 		case RowGroup:
 			b.WriteString(m.renderGroupRow(r.App, nameW, barW, maxRSS, selected))
 		case RowChild:
-			b.WriteString(renderChildRow(r.Child, w, selected))
+			b.WriteString(m.renderChildRow(r.App.Name, r.Child, nameW, selected))
 		}
 		b.WriteByte('\n')
 	}
@@ -105,15 +115,24 @@ func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 		b.WriteByte('\n')
 	}
 
-	return b.String()
+	lines := strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
+	lines = lines[:min(len(lines), max(h, 0))]
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], max(w, 0), "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // tableTitle builds the header line, appending the active filter and pause
 // indicator when set.
 func (m Model) tableTitle() string {
-	title := fmt.Sprintf(" Applications  sort:%s", m.sort)
+	sortLabel := m.sort.String()
+	if m.sort == SortSwap {
+		sortLabel = m.secondaryLabel()
+	}
+	title := fmt.Sprintf(" Applications  sort:%s", sortLabel)
 	if m.filter != "" {
-		title += "  /" + m.filter
+		title += "  /" + displayText(m.filter)
 	}
 	if m.paused {
 		title += "  ⏸"
@@ -126,9 +145,11 @@ func (m Model) tableTitle() string {
 func tableLayout(rows []VisibleRow, w int) (nameW, barW int, maxRSS int64) {
 	nameW = 16
 	for _, r := range rows {
-		if r.Kind == RowGroup && len(r.App.Name) > nameW {
-			nameW = len(r.App.Name)
+		label := r.App.Name
+		if r.Kind == RowChild {
+			label = processSummary(r.App.Name, r.Child)
 		}
+		nameW = max(nameW, lipgloss.Width(displayText(label)))
 		if r.Kind == RowGroup && r.App.RSSKB > maxRSS {
 			maxRSS = r.App.RSSKB
 		}
@@ -141,10 +162,7 @@ func tableLayout(rows []VisibleRow, w int) (nameW, barW int, maxRSS int64) {
 // renderGroupRow formats one aggregated application row, including the fold
 // indicator and the RSS bar scaled against maxRSS.
 func (m Model) renderGroupRow(a collector.AppStat, nameW, barW int, maxRSS int64, selected bool) string {
-	name := a.Name
-	if len(name) > nameW {
-		name = name[:nameW-1] + "…"
-	}
+	name := fitText(a.Name, nameW)
 
 	pfx := "  "
 	if a.ProcCount > 1 {
@@ -154,9 +172,9 @@ func (m Model) renderGroupRow(a collector.AppStat, nameW, barW int, maxRSS int64
 		}
 	}
 
-	row := fmt.Sprintf("%s%-*s %5dMB %5dMB %5d %5.1f%%",
-		pfx, nameW, name,
-		a.RSSKB/1024, a.SwapKB/1024,
+	row := fmt.Sprintf("%s%s %4dMiB %7s %9d %5.1f%%",
+		pfx, name,
+		a.RSSKB/1024, m.appSecondaryText(a),
 		a.ProcCount, a.MemPct)
 
 	if barW > 0 && maxRSS > 0 {
@@ -174,18 +192,20 @@ func (m Model) renderGroupRow(a collector.AppStat, nameW, barW int, maxRSS int64
 	return row
 }
 
-// renderChildRow formats one expanded per-process row: truncated command line
-// plus RSS.
-func renderChildRow(c collector.ProcDetail, w int, selected bool) string {
-	cmdW := max(w-12, 20) // full width minus RSS column
-	cmd := c.Cmdline
-	if len(cmd) > cmdW {
-		cmd = cmd[:cmdW-1] + "…"
+// renderChildRow aligns the process role, memory counters, and PID with
+// group columns. Full launch arguments remain accessible with c.
+func (m Model) renderChildRow(app string, child collector.ProcDetail, nameW int, selected bool) string {
+	var memPct float64
+	if total := m.snap.System.MemTotalKB; total > 0 {
+		memPct = float64(child.RSSKB) / float64(total) * 100
 	}
+	row := fmt.Sprintf("↳ %s %4dMiB %7s %9d %5.1f%%",
+		fitText(processSummary(app, child), nameW), child.RSSKB/1024,
+		m.childSecondaryText(child), child.PID, memPct)
 	if selected {
-		return selectedStyle.Render(fmt.Sprintf("  ▸ %-*s %5dMB", cmdW, cmd, c.RSSKB/1024))
+		return selectedStyle.Render(row)
 	}
-	return dimStyle.Render(fmt.Sprintf("    %-*s %5dMB", cmdW, cmd, c.RSSKB/1024))
+	return dimStyle.Render(row)
 }
 
 func (m Model) viewSide(rows []VisibleRow, width int) string {
@@ -217,9 +237,9 @@ func (m Model) viewSide(rows []VisibleRow, width int) string {
 
 func (m Model) viewDetail(a collector.AppStat, width int) string {
 	rows := []string{
-		titleStyle.Width(width).Render("▸ " + a.Name),
-		kvRow("RSS", fmt.Sprintf("%d MB", a.RSSKB/1024), width),
-		kvRow("Swap", fmt.Sprintf("%d MB", a.SwapKB/1024), width),
+		titleStyle.Width(width).Render("▸ " + displayText(a.Name)),
+		kvRow("RSS", fmt.Sprintf("%d MiB", a.RSSKB/1024), width),
+		kvRow(m.secondaryLabel(), m.appSecondaryText(a), width),
 		kvRow("Procs", fmt.Sprintf("%d", a.ProcCount), width),
 		kvRow("Mem%", fmt.Sprintf("%.1f%%", a.MemPct), width),
 	}
@@ -231,7 +251,7 @@ func (m Model) viewDetail(a collector.AppStat, width int) string {
 	} else {
 		rows = append(rows, strings.Repeat(" ", width))
 	}
-	if dSwap != 0 {
+	if dSwap != 0 && a.SwapKnown && !m.snap.ProcessCommit {
 		rows = append(rows, fmtDelta("Δ Swap", dSwap, width))
 	} else {
 		rows = append(rows, strings.Repeat(" ", width))
@@ -253,22 +273,15 @@ func (m Model) viewDetailChild(name string, c collector.ProcDetail, width int) s
 	// Reserve the last two rows (matching viewDetail's height) for the command
 	// line. Truncate to a single line — wrapping a long cmdline would jitter
 	// the layout as the cursor moves between rows.
-	cmd := c.Cmdline
-	if cmd == "" {
-		cmd = name
-	}
-	if len(cmd) > width {
-		cmd = cmd[:max(width-1, 0)] + "…"
-	}
 
 	rows := make([]string, 0, 6)
 	rows = append(rows,
-		titleStyle.Width(width).Render(fmt.Sprintf("▸ %s [%d]", name, c.PID)),
-		kvRow("RSS", fmt.Sprintf("%d MB", c.RSSKB/1024), width),
-		kvRow("Swap", fmt.Sprintf("%d MB", c.SwapKB/1024), width),
+		titleStyle.Width(width).Render(fmt.Sprintf("▸ %s [%d]", displayText(name), c.PID)),
+		kvRow("RSS", fmt.Sprintf("%d MiB", c.RSSKB/1024), width),
+		kvRow(m.secondaryLabel(), m.childSecondaryText(c), width),
 		kvRow("Mem%", fmt.Sprintf("%.1f%%", memPct), width),
-		sectionStyle.Width(width).Render("Command"),
-		dimStyle.Width(width).Render(cmd),
+		sectionStyle.Width(width).Render("c: full command / directory"),
+		dimStyle.Width(width).Render(fitText(processSummary(name, c), width)),
 	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
@@ -285,24 +298,31 @@ func (m Model) viewSystem(width int) string {
 	totalGB := float64(sys.MemTotalKB) / 1048576
 	availGB := float64(sys.MemAvailableKB) / 1048576
 	rows = append(rows,
-		kvRow("RAM", fmt.Sprintf("%.1f / %.1f GB", usedGB, totalGB), width),
-		kvDetail(fmt.Sprintf("%.1f GB avail", availGB), width),
+		kvRow("RAM", fmt.Sprintf("%.1f / %.1f GiB", usedGB, totalGB), width),
+		kvDetail(fmt.Sprintf("%.1f GiB avail", availGB), width),
 	)
 
-	swUsedGB := float64(sys.SwapUsedKB) / 1048576
-	swTotalGB := float64(sys.SwapTotalKB) / 1048576
-	swFreeGB := float64(sys.SwapFreeKB) / 1048576
-	rows = append(rows,
-		kvRow("Swap", fmt.Sprintf("%.1f / %.1f GB", swUsedGB, swTotalGB), width),
-		kvDetail(fmt.Sprintf("%.1f GB free", swFreeGB), width),
-	)
+	if sys.SwapKnown {
+		rows = append(rows,
+			kvRow("Swap", fmt.Sprintf("%.1f / %.1f GiB", float64(sys.SwapUsedKB)/1048576, float64(sys.SwapTotalKB)/1048576), width),
+			kvDetail(fmt.Sprintf("%.1f GiB free", float64(sys.SwapFreeKB)/1048576), width),
+		)
+	} else {
+		rows = append(rows, kvRow("Swap", "unavailable", width))
+	}
+	if sys.CommitKnown {
+		rows = append(rows,
+			kvRow("Commit", fmt.Sprintf("%.1f GiB limit", float64(sys.CommitLimitKB)/1048576), width),
+			kvDetail(fmt.Sprintf("%.1f GiB available", float64(sys.CommitAvailableKB)/1048576), width),
+		)
+	}
 
 	if sys.ZswapPoolKB > 0 {
 		poolGB := float64(sys.ZswapPoolKB) / 1048576
 		dataGB := float64(sys.ZswapDataKB) / 1048576
 		ratio := float64(sys.ZswapDataKB) / float64(sys.ZswapPoolKB)
 		rows = append(rows,
-			kvRow("Zswp", fmt.Sprintf("%.1f / %.1f GB", poolGB, dataGB), width),
+			kvRow("Zswp", fmt.Sprintf("%.1f / %.1f GiB", poolGB, dataGB), width),
 			kvDetail(fmt.Sprintf("%.1fx ratio", ratio), width),
 		)
 	}
@@ -351,8 +371,8 @@ func (m Model) viewOOM(width int) string {
 		o := m.snap.OOM[i]
 		t = t.Row(
 			fmt.Sprintf("%d", o.Score),
-			o.Name,
-			fmt.Sprintf("%d MB", o.RSSKB/1024),
+			displayText(o.Name),
+			fmt.Sprintf("%d MiB", o.RSSKB/1024),
 		)
 	}
 
@@ -361,19 +381,29 @@ func (m Model) viewOOM(width int) string {
 }
 
 func (m Model) viewRescue(width int) string {
-	if m.snap == nil || len(m.snap.Apps) == 0 {
+	row, ok := m.currentRow(m.visibleRows(m.sortedApps()))
+	if !ok {
 		return ""
 	}
-	header := sectionDivStyle.Width(width).Render("Rescue")
-	top := m.snap.Apps[0]
-	cmd := warnStyle.PaddingLeft(2).Width(width).Render(rescueCmdStr(top.Name))
-	return lipgloss.JoinVertical(lipgloss.Left, header, cmd)
+	children := row.App.Children
+	if row.Kind == RowChild {
+		children = []collector.ProcDetail{row.Child}
+	}
+	header := sectionDivStyle.Width(width).Render("Rescue selected")
+	var content string
+	if len(children) == 1 {
+		content = warnStyle.Width(width).Render(killCmdStr(children, false))
+	} else {
+		content = warnStyle.Width(width).Render(fmt.Sprintf("x: %s %d processes", killSignalName(false), len(children)))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, header, content,
+		dimStyle.Width(width).Render("x / X opens confirmation"))
 }
 
 func viewKeyHints(width int) string {
 	return lipgloss.JoinVertical(lipgloss.Left,
 		dimStyle.Width(width).Render("↑↓ nav  ↵ fold  s sort"),
-		dimStyle.Width(width).Render("/ filter  x kill  ? help"),
+		dimStyle.Width(width).Render("/ filter  c command  x kill"),
 	)
 }
 
@@ -383,11 +413,11 @@ func (m Model) viewStatus(w int) string {
 	if m.filtering {
 		left = " / " + m.input.View()
 	} else if m.status != "" {
-		left = " " + m.status
+		left = " " + displayText(m.status)
 	}
 
 	if m.err != nil {
-		right = lipgloss.NewStyle().Foreground(colorDanger).Render(m.err.Error())
+		right = lipgloss.NewStyle().Foreground(colorDanger).Render(displayText(m.err.Error()))
 	} else if m.snap != nil {
 		right = m.snap.At.Format("15:04:05")
 	}
@@ -400,33 +430,30 @@ func (m Model) viewStatus(w int) string {
 	return statusStyle.Render(left + strings.Repeat(" ", gap) + right)
 }
 
-func (m Model) viewKillModal(rows []VisibleRow) string {
-	if m.cursor >= len(rows) {
-		return ""
-	}
-	r := rows[m.cursor]
+func (m Model) viewKillModal() string {
+	r := m.killTarget
 
 	var title string
 	var procs int
 	var rssKB int64
 	var cmd string
 	if r.Kind == RowChild {
-		title = fmt.Sprintf("%s [%d]", r.App.Name, r.Child.PID)
+		title = fmt.Sprintf("%s [%d]", displayText(r.App.Name), r.Child.PID)
 		procs = 1
 		rssKB = r.Child.RSSKB
-		cmd = killCmdStrPID(r.Child.PID, m.killForce)
+		cmd = killCmdStr([]collector.ProcDetail{r.Child}, m.killForce)
 	} else {
-		title = r.App.Name
-		procs = r.App.ProcCount
+		title = displayText(r.App.Name)
+		procs = len(r.App.Children)
 		rssKB = r.App.RSSKB
-		cmd = killCmdStr(r.App.Name, m.killForce)
+		cmd = killCmdStr(r.App.Children, m.killForce)
 	}
 
 	content := fmt.Sprintf(
 		"%s  Kill %s?\n\n"+
 			"  Signal:  %s\n"+
 			"  Procs:   %d\n"+
-			"  RSS:     %d MB\n"+
+			"  RSS:     %d MiB\n"+
 			"  Command: %s\n\n"+
 			"  %s confirm    %s cancel",
 		lipgloss.NewStyle().Foreground(colorDanger).Bold(true).Render("⚠"),
@@ -437,7 +464,7 @@ func (m Model) viewKillModal(rows []VisibleRow) string {
 		helpKeyStyle.Render("n/esc"),
 	)
 
-	return modalStyle.Render(content)
+	return modalStyle.Width(max(m.width-2, 1)).Render(content)
 }
 
 func (m Model) viewHelpModal() string {
@@ -447,11 +474,12 @@ func (m Model) viewHelpModal() string {
 		"  " + helpKeyStyle.Render("↓/j") + "  Move down\n\n" +
 		sectionStyle.Render("Actions") + "\n" +
 		"  " + helpKeyStyle.Render("↵") + "    Fold/unfold group\n" +
+		"  " + helpKeyStyle.Render("c") + "    Inspect full command(s)\n" +
 		"  " + helpKeyStyle.Render("x") + "    " + killSignalName(false) + " selected\n" +
 		"  " + helpKeyStyle.Render("X") + "    " + killSignalName(true) + " selected\n\n" +
 		sectionStyle.Render("Display") + "\n" +
 		"  " + helpKeyStyle.Render("s") + "    Cycle sort mode\n" +
-		"  " + helpKeyStyle.Render("/") + "    Filter by name\n" +
+		"  " + helpKeyStyle.Render("/") + "    Filter name/command\n" +
 		"  " + helpKeyStyle.Render("p") + "    Pause/resume refresh\n\n" +
 		"  " + helpKeyStyle.Render("?") + "    Toggle help\n" +
 		"  " + helpKeyStyle.Render("q") + "    Quit"
@@ -474,12 +502,33 @@ func kvDetail(detail string, width int) string {
 func fmtDelta(label string, kb int64, width int) string {
 	mb := kb / 1024
 	style := deltaDownStyle
-	text := fmt.Sprintf("%d MB", mb)
+	text := fmt.Sprintf("%d MiB", mb)
 	if mb > 0 {
 		style = deltaUpStyle
-		text = fmt.Sprintf("+%d MB", mb)
+		text = fmt.Sprintf("+%d MiB", mb)
 	}
 	l := style.Width(kvLabelW).Render(label)
 	v := style.Width(max(width-kvLabelW-2, 1)).Render(text)
 	return "  " + l + v
+}
+
+func memoryText(kb int64, known bool) string {
+	if !known {
+		return "n/a"
+	}
+	return fmt.Sprintf("%dMiB", kb/1024)
+}
+
+func (m Model) appSecondaryText(a collector.AppStat) string {
+	if m.snap.ProcessCommit {
+		return memoryText(a.CommitKB, a.CommitKnown)
+	}
+	return memoryText(a.SwapKB, a.SwapKnown)
+}
+
+func (m Model) childSecondaryText(c collector.ProcDetail) string {
+	if m.snap.ProcessCommit {
+		return memoryText(c.CommitKB, c.CommitKnown)
+	}
+	return memoryText(c.SwapKB, c.SwapKnown)
 }

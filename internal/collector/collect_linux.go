@@ -40,6 +40,7 @@ func readMemInfo() (SystemInfo, error) {
 		return SystemInfo{}, err
 	}
 	var info SystemInfo
+	seen := make(map[string]bool)
 	// Map each /proc/meminfo key to the field it fills; absent keys stay zero.
 	dst := map[string]*int64{
 		"MemTotal":     &info.MemTotalKB,
@@ -61,10 +62,12 @@ func readMemInfo() (SystemInfo, error) {
 		}
 		if val, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
 			*field = val
+			seen[strings.TrimSuffix(fields[0], ":")] = true
 		}
 	}
 	info.MemUsedKB = info.MemTotalKB - info.MemAvailableKB
 	info.SwapUsedKB = info.SwapTotalKB - info.SwapFreeKB
+	info.SwapKnown = seen["SwapTotal"] && seen["SwapFree"]
 	return info, nil
 }
 
@@ -85,28 +88,26 @@ func collectApps(totalKB int64) []AppStat {
 		}
 
 		dir := filepath.Join("/proc", pid)
-		name := procName(dir)
-		if name == "" {
+		name, process, ok := readProcess(dir)
+		if !ok {
 			continue
 		}
 
-		rss, swap := procMem(dir)
 		g, ok := groups[name]
 		if !ok {
 			g = &appGroup{}
 			groups[name] = g
 		}
-		g.rssKB += rss
-		g.swapKB += swap
+		g.rssKB += process.RSSKB
+		g.swapKB += process.SwapKB
 		g.count++
 
 		pidNum, _ := strconv.Atoi(pid)
-		g.children = append(g.children, ProcDetail{
-			PID:     pidNum,
-			Cmdline: cmdlineDisplay(dir),
-			RSSKB:   rss,
-			SwapKB:  swap,
-		})
+		process.PID = pidNum
+		if name == "claude" {
+			process.Session = claudeSession(pidNum, process.StartTime)
+		}
+		g.children = append(g.children, process)
 	}
 
 	return buildAppStats(groups, totalKB)
@@ -169,7 +170,11 @@ func cmdlineDisplay(dir string) string {
 	if len(args) == 0 {
 		return ""
 	}
-	args[0] = filepath.Base(args[0])
+	// Some processes rewrite all argv into a single string. Applying Base
+	// to that string would discard flags before its final path separator.
+	if !strings.ContainsAny(args[0], " \t\r\n") {
+		args[0] = filepath.Base(args[0])
+	}
 	s := strings.Join(args, " ")
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		s = strings.ReplaceAll(s, home, "~")
@@ -193,10 +198,10 @@ func splitCmdline(dir string) []string {
 	return args
 }
 
-func procMem(dir string) (rss, swap int64) {
+func procMem(dir string) (rss, swap int64, swapKnown bool) {
 	data, err := os.ReadFile(filepath.Join(dir, "status"))
 	if err != nil {
-		return 0, 0
+		return 0, 0, false
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
@@ -206,9 +211,14 @@ func procMem(dir string) (rss, swap int64) {
 			rss = parseKB(line)
 		case strings.HasPrefix(line, "VmSwap:"):
 			swap = parseKB(line)
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				_, err := strconv.ParseInt(fields[1], 10, 64)
+				swapKnown = err == nil
+			}
 		}
 	}
-	return rss, swap
+	return rss, swap, swapKnown
 }
 
 func parseKB(line string) int64 {
@@ -311,8 +321,73 @@ func oomEntry(e os.DirEntry) (OOMEntry, bool) {
 	if name == "" {
 		return OOMEntry{}, false
 	}
-	rss, _ := procMem(dir)
+	rss, _, _ := procMem(dir)
 	pidNum, _ := strconv.Atoi(pid)
 
 	return OOMEntry{Score: score, RSSKB: rss, Name: name, PID: pidNum}, true
+}
+
+// ProcessStartTime returns Linux's start-time ticks from /proc/PID/stat.
+func ProcessStartTime(pid int) (uint64, error) {
+	return readStartTime(filepath.Join("/proc", strconv.Itoa(pid)))
+}
+
+func readStartTime(dir string) (uint64, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "stat"))
+	if err != nil {
+		return 0, err
+	}
+	return parseStartTime(string(raw))
+}
+
+func parseStartTime(stat string) (uint64, error) {
+	// comm (field 2) can contain spaces and parentheses; the final ')' ends it.
+	_, rest, ok := strings.CutLast(stat, ")")
+	if !ok {
+		return 0, fmt.Errorf("invalid process stat")
+	}
+	fields := strings.Fields(rest)
+	if len(fields) <= 19 {
+		return 0, fmt.Errorf("invalid process stat")
+	}
+	return strconv.ParseUint(fields[19], 10, 64) // field 22, after pid and comm
+}
+
+// readProcess verifies that metadata and counters belong to one process lifetime.
+func readProcess(dir string) (string, ProcDetail, bool) {
+	start, err := readStartTime(dir)
+	if err != nil {
+		return "", ProcDetail{}, false
+	}
+	name := procName(dir)
+	if name == "" {
+		return "", ProcDetail{}, false
+	}
+	rss, swap, known := procMem(dir)
+	if rss <= 0 && swap <= 0 {
+		return "", ProcDetail{}, false
+	} // zombies and tasks with neither resident nor swapped memory
+	cwd, terminal := processContext(dir)
+	cmdline := cmdlineDisplay(dir)
+	end, err := readStartTime(dir)
+	if err != nil || start != end {
+		return "", ProcDetail{}, false
+	}
+	return name, ProcDetail{StartTime: start, Cmdline: cmdline, Cwd: cwd, Terminal: terminal, RSSKB: rss, SwapKB: swap, SwapKnown: known}, true
+}
+
+func processContext(dir string) (cwd, terminal string) {
+	cwd, _ = os.Readlink(filepath.Join(dir, "cwd"))
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if cwd == home {
+			cwd = "~"
+		} else if strings.HasPrefix(cwd, home+"/") {
+			cwd = "~" + strings.TrimPrefix(cwd, home)
+		}
+	}
+	input, _ := os.Readlink(filepath.Join(dir, "fd", "0"))
+	if strings.HasPrefix(input, "/dev/pts/") || strings.HasPrefix(input, "/dev/tty") {
+		terminal = strings.TrimPrefix(input, "/dev/")
+	}
+	return cwd, terminal
 }

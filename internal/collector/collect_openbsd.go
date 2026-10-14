@@ -148,6 +148,7 @@ func readMemInfo() (SystemInfo, error) {
 		info.SwapTotalKB = int64(uvm.Swpages) * ps / 1024
 		info.SwapUsedKB = int64(uvm.Swpginuse) * ps / 1024
 		info.SwapFreeKB = info.SwapTotalKB - info.SwapUsedKB
+		info.SwapKnown = true
 	}
 	info.MemUsedKB = info.MemTotalKB - info.MemAvailableKB
 
@@ -190,11 +191,26 @@ func collectApps(totalKB int64) []AppStat {
 		g.rssKB += rssKB
 		g.count++
 		g.children = append(g.children, ProcDetail{
-			PID:     pid,
-			Cmdline: comm, // OpenBSD: kern.proc.args is restricted, use comm
-			RSSKB:   rssKB,
+			PID:       pid,
+			StartTime: kp.UstartSec*1000000 + uint64(kp.UstartUsec),
+			Cmdline:   comm, // OpenBSD: kern.proc.args is restricted, use comm
+			RSSKB:     rssKB,
 		})
 	}
 
 	return buildAppStats(groups, totalKB)
+}
+
+// ProcessStartTime returns the OpenBSD process creation time in microseconds.
+func ProcessStartTime(pid int) (uint64, error) {
+	const kernProcPID = 1
+	raw, err := unix.SysctlRaw("kern.proc", kernProcPID, pid, sizeofKinfoProc, 1)
+	if err != nil {
+		return 0, err
+	}
+	if len(raw) != sizeofKinfoProc {
+		return 0, fmt.Errorf("invalid process record size")
+	}
+	kp := (*kinfoProc)(unsafe.Pointer(&raw[0]))
+	return kp.UstartSec*1000000 + uint64(kp.UstartUsec), nil
 }

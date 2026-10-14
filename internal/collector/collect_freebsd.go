@@ -152,7 +152,7 @@ func readMemInfo() (SystemInfo, error) {
 	info.MemUsedKB = info.MemTotalKB - info.MemAvailableKB
 
 	// Swap via swapctl command — kvm_getswapinfo requires CGo
-	info.SwapTotalKB, info.SwapUsedKB = readSwapInfo()
+	info.SwapTotalKB, info.SwapUsedKB, info.SwapKnown = readSwapInfo()
 	info.SwapFreeKB = info.SwapTotalKB - info.SwapUsedKB
 
 	return info, nil
@@ -160,19 +160,19 @@ func readMemInfo() (SystemInfo, error) {
 
 // readSwapInfo parses "swapctl -sk" output for total and used swap in KiB.
 // Returns (0, 0) if unavailable.
-func readSwapInfo() (totalKB, usedKB int64) {
+func readSwapInfo() (totalKB, usedKB int64, known bool) {
 	out, err := exec.Command("/usr/sbin/swapctl", "-sk").Output()
 	if err != nil {
-		return 0, 0
+		return 0, 0, false
 	}
 	// Format: "total: <total> <used> <avail> <capacity>"
 	fields := strings.Fields(string(out))
 	if len(fields) < 4 || fields[0] != "total:" {
-		return 0, 0
+		return 0, 0, false
 	}
-	total, _ := strconv.ParseInt(fields[1], 10, 64)
-	used, _ := strconv.ParseInt(fields[2], 10, 64)
-	return total, used
+	total, totalErr := strconv.ParseInt(fields[1], 10, 64)
+	used, usedErr := strconv.ParseInt(fields[2], 10, 64)
+	return total, used, totalErr == nil && usedErr == nil
 }
 
 func collectApps(totalKB int64) []AppStat {
@@ -219,10 +219,12 @@ func collectApps(totalKB int64) []AppStat {
 		g.swapKB += swapKB
 		g.count++
 		g.children = append(g.children, ProcDetail{
-			PID:     pid,
-			Cmdline: cmdlineDisplay(pid),
-			RSSKB:   rssKB,
-			SwapKB:  swapKB,
+			PID:       pid,
+			StartTime: uint64(kp.Start.Sec)*1000000 + uint64(kp.Start.Usec),
+			SwapKnown: true,
+			Cmdline:   cmdlineDisplay(pid),
+			RSSKB:     rssKB,
+			SwapKB:    swapKB,
 		})
 	}
 
@@ -253,7 +255,11 @@ func cmdlineDisplay(pid int) string {
 	if len(args) == 0 {
 		return ""
 	}
-	args[0] = filepath.Base(args[0])
+	// Some processes rewrite all argv into a single string. Applying Base
+	// to that string would discard flags before its final path separator.
+	if !strings.ContainsAny(args[0], " \t\r\n") {
+		args[0] = filepath.Base(args[0])
+	}
 	s := strings.Join(args, " ")
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		s = strings.ReplaceAll(s, home, "~")
@@ -276,4 +282,17 @@ func procArgs(pid int) []string {
 		}
 	}
 	return args
+}
+
+// ProcessStartTime returns the FreeBSD process creation time in microseconds.
+func ProcessStartTime(pid int) (uint64, error) {
+	raw, err := unix.SysctlRaw("kern.proc.pid", pid)
+	if err != nil {
+		return 0, err
+	}
+	if len(raw) != sizeofKinfoProc {
+		return 0, fmt.Errorf("invalid process record size")
+	}
+	kp := (*kinfoProc)(unsafe.Pointer(&raw[0]))
+	return uint64(kp.Start.Sec)*1000000 + uint64(kp.Start.Usec), nil
 }

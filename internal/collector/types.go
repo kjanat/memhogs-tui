@@ -10,43 +10,66 @@ import "time"
 
 // Snapshot is a point-in-time view of system memory state.
 type Snapshot struct {
-	At     time.Time  // when the snapshot was taken
-	Apps   []AppStat  // top applications sorted by RSS descending
-	System SystemInfo // system-wide memory counters
-	PSI    *PSIInfo   // memory pressure; nil if unavailable on this platform
-	OOM    []OOMEntry // top OOM kill candidates sorted by score descending
+	At            time.Time  // when the snapshot was taken
+	Apps          []AppStat  // all eligible applications sorted by RSS descending
+	ProcessCommit bool       // process commit is collected instead of swap (Windows)
+	System        SystemInfo // system-wide memory counters
+	PSI           *PSIInfo   // memory pressure; nil if unavailable on this platform
+	OOM           []OOMEntry // top OOM kill candidates sorted by score descending
 }
 
 // AppStat is aggregated memory for a named application group.
 // Name serves as both the display label and the grouping key.
 type AppStat struct {
-	Name      string       // short name: exe basename + first non-flag arg (e.g. "node playwright-mcp")
-	RSSKB     int64        // total resident set size in KiB across all grouped processes
-	SwapKB    int64        // total swap usage in KiB
-	ProcCount int          // number of processes in this group
-	MemPct    float64      // RSS as a percentage of total physical RAM
-	Children  []ProcDetail // individual processes, sorted by RSS descending
+	Name        string       // short name: exe basename + first non-flag arg (e.g. "node playwright-mcp")
+	RSSKB       int64        // total resident set size in KiB across all grouped processes
+	SwapKB      int64        // total swap usage in KiB
+	SwapKnown   bool         // true only when swap is available for every child
+	CommitKB    int64        // Windows process commit charge in KiB
+	CommitKnown bool         // true only when commit is available for every child
+	ProcCount   int          // number of processes in this group
+	MemPct      float64      // RSS as a percentage of total physical RAM
+	Children    []ProcDetail // individual processes, sorted by RSS descending
 }
 
 // ProcDetail holds per-PID data for an individual process within an [AppStat] group.
 type ProcDetail struct {
-	PID     int    // OS process ID
-	Cmdline string // full command line for display when the group is expanded
-	RSSKB   int64  // resident set size in KiB
-	SwapKB  int64  // swap usage in KiB
+	PID         int          // OS process ID
+	StartTime   uint64       // opaque OS creation time; PID plus StartTime identifies a process
+	Cmdline     string       // full command line for display when the group is expanded
+	Cwd         string       // working directory, when readable
+	Terminal    string       // controlling input terminal, when readable
+	Session     *SessionInfo // verified Claude session metadata; nil if unavailable
+	RSSKB       int64        // resident set size in KiB
+	SwapKB      int64        // swap usage in KiB
+	SwapKnown   bool         // distinguishes unavailable swap from zero
+	CommitKB    int64        // Windows process commit charge in KiB
+	CommitKnown bool         // distinguishes unavailable commit from zero
+}
+
+// SessionInfo identifies an active Claude conversation without reading its transcript.
+type SessionInfo struct {
+	ID         string // full session UUID
+	Name       string // current session display name
+	ProjectDir string // session's original project directory
+	Entrypoint string // Claude entrypoint, such as cli or sdk-ts
 }
 
 // SystemInfo holds system-wide memory counters.
 // All values are in KiB.
 type SystemInfo struct {
-	MemTotalKB     int64 // total physical RAM
-	MemAvailableKB int64 // available RAM (accounts for reclaimable caches)
-	MemUsedKB      int64 // MemTotalKB − MemAvailableKB
-	SwapTotalKB    int64 // total swap space
-	SwapFreeKB     int64 // unused swap
-	SwapUsedKB     int64 // SwapTotalKB − SwapFreeKB
-	ZswapPoolKB    int64 // compressed pool size; 0 if zswap is disabled or unsupported
-	ZswapDataKB    int64 // original uncompressed data backed by zswap
+	MemTotalKB        int64 // total physical RAM
+	MemAvailableKB    int64 // available RAM (accounts for reclaimable caches)
+	MemUsedKB         int64 // MemTotalKB − MemAvailableKB
+	SwapTotalKB       int64 // total swap space
+	SwapFreeKB        int64 // unused swap
+	SwapUsedKB        int64 // SwapTotalKB − SwapFreeKB
+	SwapKnown         bool  // true when system swap counters were read successfully
+	CommitLimitKB     int64 // Windows maximum commit available to this process
+	CommitAvailableKB int64 // Windows remaining commit available to this process
+	CommitKnown       bool  // true when Windows commit counters are available
+	ZswapPoolKB       int64 // compressed pool size; 0 if zswap is disabled or unsupported
+	ZswapDataKB       int64 // original uncompressed data backed by zswap
 }
 
 // PSIInfo holds memory pressure stall information.

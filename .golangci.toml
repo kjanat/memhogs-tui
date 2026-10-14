@@ -1,0 +1,95 @@
+version = "2"
+
+[run]
+timeout               = "5m"
+tests                 = true
+modules-download-mode = "mod"
+
+[issues]
+max-issues-per-linter = 0
+max-same-issues       = 0
+
+[formatters]
+enable = ["gci", "gofumpt", "gofmt", "goimports"]
+
+[formatters.settings.gci]
+sections = ["standard", "default", "localmodule"]
+
+[formatters.settings.goimports]
+local-prefixes = ["memhogs.kjanat.dev"]
+
+[formatters.settings.gofumpt]
+module-path = "memhogs.kjanat.dev"
+
+[linters]
+default = "standard"
+enable  = [
+  "bodyclose",
+  "contextcheck",
+  "copyloopvar",
+  "errcheck",
+  "errchkjson",
+  "errorlint",
+  "exhaustive",
+  "fatcontext",
+  "gocheckcompilerdirectives",
+  "goconst",
+  "gocritic",
+  "gocyclo",
+  "gosec",
+  "govet",
+  "ineffassign",
+  "misspell",
+  "modernize",
+  "nakedret",
+  "nilerr",
+  "noctx",
+  "predeclared",
+  "prealloc",
+  "reassign",
+  "revive",
+  "staticcheck",
+  "tagalign",
+  "unconvert",
+  "unparam",
+  "unused",
+  "usestdlibvars",
+  "usetesting",
+  "wastedassign"
+]
+
+[linters.settings.errcheck]
+check-type-assertions = false
+check-blank           = false
+
+[linters.settings.govet]
+enable-all = true
+disable    = ["fieldalignment", "shadow"]
+
+[[linters.settings.revive.rules]]
+name = "var-naming"
+
+[[linters.settings.revive.rules]]
+name = "package-comments"
+
+[[linters.settings.revive.rules]]
+name     = "exported"
+severity = "warning"
+
+[linters.settings.gocritic]
+disabled-checks = ["ifElseChain"]
+
+[linters.settings.gocyclo]
+min-complexity = 10
+
+[linters.settings.exhaustive]
+default-signifies-exhaustive = true
+
+[[linters.exclusions.rules]]
+path    = "_test\\.go"
+linters = ["errcheck", "errchkjson", "bodyclose", "noctx", "revive", "goconst", "usestdlibvars"]
+
+[[linters.exclusions.rules]]
+path    = "internal/collector/"
+linters = ["gosec"]
+text    = "G304"
