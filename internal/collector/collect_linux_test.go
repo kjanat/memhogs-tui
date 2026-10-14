@@ -53,6 +53,30 @@ func TestProcMemAvailability(t *testing.T) {
 	}
 }
 
+func TestProcStatusEffectiveAccount(t *testing.T) {
+	for _, tt := range []struct{ line, want string }{
+		{"Uid:\t1000\t0\t1000\t1000", "0"},
+		{"Uid: 0 1000 0 0", "1000"},
+		{"Uid: 0 bad 0 0", ""},
+		{"Uid: 0 -1 0 0", ""},
+		{"Uid: 0 4294967296 0 0", ""},
+		{"Uid: 1000", ""},
+		{"", ""},
+	} {
+		t.Run(tt.line, func(t *testing.T) {
+			dir := t.TempDir()
+			status := tt.line + "\nVmRSS: 4096 kB\nVmSwap: 128 kB\n"
+			if err := os.WriteFile(filepath.Join(dir, "status"), []byte(status), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			rss, swap, known, uid := procStatus(dir)
+			if uid != tt.want || rss != 4096 || swap != 128 || !known {
+				t.Fatalf("got uid=%q rss=%d swap=%d known=%v", uid, rss, swap, known)
+			}
+		})
+	}
+}
+
 func TestProcessStartTimeMatchesCurrentProcess(t *testing.T) {
 	start, err := ProcessStartTime(os.Getpid())
 	if err != nil || start == 0 {
@@ -80,7 +104,7 @@ func TestReadProcessFixture(t *testing.T) {
 		"stat":    "123 (worker ) name) " + strings.Join(fields, " "),
 		"comm":    "MainThread\n",
 		"cmdline": "/usr/bin/node\x00/projects/myapp/server.js\x00--worker\x00",
-		"status":  "VmRSS: 4096 kB\nVmSwap: 512 kB\n",
+		"status":  "Uid: 0 1000 0 0\nVmRSS: 4096 kB\nVmSwap: 512 kB\n",
 	}
 	for name, value := range fixtures {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0o600); err != nil {
@@ -88,7 +112,7 @@ func TestReadProcessFixture(t *testing.T) {
 		}
 	}
 	name, p, ok := readProcess(dir)
-	want := ProcDetail{Args: []string{"/usr/bin/node", "/projects/myapp/server.js", "--worker"}, StartTime: 100, Cmdline: "node /projects/myapp/server.js --worker", RSSKB: 4096, SwapKB: 512, SwapKnown: true}
+	want := ProcDetail{Args: []string{"/usr/bin/node", "/projects/myapp/server.js", "--worker"}, UID: "1000", StartTime: 100, Cmdline: "node /projects/myapp/server.js --worker", RSSKB: 4096, SwapKB: 512, SwapKnown: true}
 	requireCPU(t, !p.CPUAt.IsZero() && p.CPUTime == 0, "missing idle CPU observation")
 	want.CPUAt = p.CPUAt
 	if !ok || name != "node server.js" || !reflect.DeepEqual(p, want) {

@@ -49,7 +49,10 @@ func (m Model) viewCommand() string {
 }
 
 func processContextLines(p collector.ProcDetail) []string {
-	lines := []string{fmt.Sprintf("Parent PID: %d", p.ParentPID), "Executable: " + displayText(p.Executable)}
+	lines := []string{
+		fmt.Sprintf("Parent PID: %d", p.ParentPID), "Executable: " + displayText(p.Executable),
+		"Account owner: " + displayText(processAccount(p)),
+	}
 	if ctx := p.Context; ctx != nil {
 		lines = append(lines, fmt.Sprintf("Application: %s [PID %d]", displayText(ctx.Application), ctx.ApplicationPID),
 			"Application source: "+displayText(ctx.ApplicationSource),

@@ -196,14 +196,21 @@ func splitCmdline(dir string) []string {
 }
 
 func procMem(dir string) (rss, swap int64, swapKnown bool) {
+	rss, swap, swapKnown, _ = procStatus(dir)
+	return rss, swap, swapKnown
+}
+
+func procStatus(dir string) (rss, swap int64, swapKnown bool, uid string) {
 	data, err := os.ReadFile(filepath.Join(dir, "status"))
 	if err != nil {
-		return 0, 0, false
+		return 0, 0, false, ""
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		line := scanner.Text()
 		switch {
+		case strings.HasPrefix(line, "Uid:"):
+			uid = effectiveUID(line)
 		case strings.HasPrefix(line, "VmRSS:"):
 			rss = parseKB(line)
 		case strings.HasPrefix(line, "VmSwap:"):
@@ -215,7 +222,19 @@ func procMem(dir string) (rss, swap int64, swapKnown bool) {
 			}
 		}
 	}
-	return rss, swap, swapKnown
+	return rss, swap, swapKnown, uid
+}
+
+func effectiveUID(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) < 3 {
+		return ""
+	}
+	uid, err := strconv.ParseUint(fields[2], 10, 32)
+	if err != nil {
+		return ""
+	}
+	return strconv.FormatUint(uid, 10)
 }
 
 func parseKB(line string) int64 {
@@ -372,7 +391,7 @@ func readProcess(dir string) (string, ProcDetail, bool) {
 	if name == "" {
 		return "", ProcDetail{}, false
 	}
-	rss, swap, known := procMem(dir)
+	rss, swap, known, uid := procStatus(dir)
 	if rss <= 0 && swap <= 0 {
 		return "", ProcDetail{}, false
 	} // zombies and tasks with neither resident nor swapped memory
@@ -386,7 +405,7 @@ func readProcess(dir string) (string, ProcDetail, bool) {
 	if err != nil || identityErr != nil || start != end {
 		return "", ProcDetail{}, false
 	}
-	p := ProcDetail{StartTime: start, ParentPID: parent, Executable: executable, Args: args, Cmdline: cmdline, Cwd: cwd, Terminal: terminal, RSSKB: rss, SwapKB: swap, SwapKnown: known}
+	p := ProcDetail{StartTime: start, ParentPID: parent, Executable: executable, Args: args, Cmdline: cmdline, Cwd: cwd, Terminal: terminal, UID: uid, RSSKB: rss, SwapKB: swap, SwapKnown: known}
 	if seconds, ok := parseCPUTime(string(raw), clockTicks()); ok {
 		p.CPUTime, p.CPUAt = seconds, at
 	}

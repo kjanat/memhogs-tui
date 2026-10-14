@@ -193,6 +193,7 @@ func collectApps(totalKB int64) []AppStat {
 		g.count++
 		process := ProcDetail{
 			PID:       pid,
+			UID:       fmt.Sprint(kp.Uid),
 			StartTime: kp.UstartSec*1000000 + uint64(kp.UstartUsec),
 			Cmdline:   comm, // OpenBSD: kern.proc.args is restricted, use comm
 			RSSKB:     rssKB,

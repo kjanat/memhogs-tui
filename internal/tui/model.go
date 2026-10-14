@@ -68,8 +68,10 @@ type Model struct {
 	signal      func(collector.ProcDetail, bool) error
 	killForce   bool // false = graceful, true = force kill
 
-	width  int
-	height int
+	width       int
+	height      int
+	sideFocused bool
+	sideOffset  int
 
 	interval   time.Duration
 	grouping   collector.Grouping
@@ -191,9 +193,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, doClearStatus()
 
 	case tea.KeyPressMsg:
+		before, selected := m.currentRow(m.visibleRows(m.sortedApps()))
 		next, cmd := m.handleKey(msg)
 		m = next.(Model)
-		return m.adjustViewport(), cmd
+		return m.resetSideSelection(before, selected).adjustViewport(), cmd
 	}
 
 	return m.adjustViewport(), nil
@@ -208,6 +211,7 @@ func (m Model) applySnapshot(s *collector.Snapshot) Model {
 	m.pruneExpanded()
 	m.err = nil
 	m = m.restoreSelection(row, selected)
+	m = m.resetSideSelection(row, selected)
 
 	return m
 }
@@ -238,6 +242,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.killConfirm {
 		return m.handleKillKey(msg)
+	}
+	if next, handled := m.handleSideKey(msg); handled {
+		return next, nil
 	}
 	return m.handleNormalKey(msg)
 }
@@ -316,11 +323,11 @@ func (m Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // flattened row list.
 func (m Model) handleNavKey(msg tea.KeyPressMsg) Model {
 	rows := m.visibleRows(m.sortedApps())
+	if cursor, handled := navigationOffset(msg, m.cursor, max(m.height-4, 1), max(len(rows)-1, 0)); handled {
+		m.cursor = cursor
+		return m
+	}
 	switch {
-	case key.Matches(msg, keys.Up):
-		m.cursor = max(0, m.cursor-1)
-	case key.Matches(msg, keys.Down):
-		m.cursor = min(m.cursor+1, max(0, len(rows)-1))
 	case key.Matches(msg, keys.Toggle):
 		m = m.toggleFold(rows)
 	case key.Matches(msg, keys.Expand):

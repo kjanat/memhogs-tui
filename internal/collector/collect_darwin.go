@@ -135,6 +135,7 @@ func collectApps(totalKB int64) []AppStat {
 
 		process := procMem(int32(pid))
 		process.PID = pid
+		process.UID = fmt.Sprint(kp.Eproc.Ucred.Uid)
 		process.StartTime = uint64(kp.Proc.P_starttime.Sec)*1000000 + uint64(kp.Proc.P_starttime.Usec)
 		if !process.CPUAt.IsZero() {
 			if start, err := ProcessStartTime(pid); err != nil || start != process.StartTime {

@@ -53,6 +53,8 @@ type ProcDetail struct {
 	Cmdline     string          // full command line for display when the group is expanded
 	Cwd         string          // working directory, when readable
 	Terminal    string          // controlling input terminal, when readable
+	UID         string          // effective account ID; empty when unavailable
+	User        string          // resolved account name; empty when unavailable
 	Session     *SessionInfo    // verified Claude session metadata; nil if unavailable
 	Context     *ProcessContext // common application, workspace, and ancestry context
 	RSSKB       int64           // resident set size in KiB

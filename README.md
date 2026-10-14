@@ -50,6 +50,9 @@ one process, one application instance, a tree, or a broad executable group.
 | Key                           | Action                                                                                                                |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `↑` / `k`, `↓` / `j`          | Move selection; the table scrolls to keep it visible                                                                  |
+| `Page Up`, `Page Down`        | Move one visible page through table rows, or scroll details when the sidebar has focus                                |
+| `Home`, `End`                 | Select the first or last visible-list row, or jump to the start or end of details                                     |
+| `Tab`, `Esc`                  | Switch between table and details; `Esc` returns from details to the table                                             |
 | `Enter`, `→` / `l`, `←` / `h` | Toggle, expand, or collapse a process group                                                                           |
 | `s`                           | Cycle RSS, swap (commit on Windows), process count, name, and CPU sorting                                             |
 | `/`, `Enter`, `Esc`           | Search group names and child command lines, accept, or clear the filter                                               |
@@ -111,6 +114,27 @@ can identify a repository from an open resource such as a `.git` socket. Resourc
 contents are never read. The full-command inspector shows the evidence and source
 of the directory label; a current directory or open repository is not a recorded
 spawn directory.
+
+The sidebar puts **Process context** directly below the selected row's memory
+and CPU counters. Group rows show their verified root process; child rows show
+that individual process. It includes the account name and effective UID when
+available, the launching application from observed ancestry, directory, wrapped
+launch arguments, parent PID, executable, terminal, and available session details.
+Broad executable groups ask you to select a child instead of borrowing one
+process's owner for the entire group.
+
+**Launch dir (session)** comes from verified session metadata. Otherwise the
+sidebar labels the observed working directory **Current dir** and says that the
+launch directory was not recorded. A process can change its working directory;
+the original directory cannot be recovered from its current cwd alone. Argument
+previews are bounded; `c` opens the complete command/context inspector.
+
+Press `Tab` to focus and scroll details with arrows, Page Up/Down, or Home/End;
+`Tab` or `Esc` returns to the table. RAM, available memory, swap, and the Linux
+10-second PSI summary (`s` = some, `f` = full) stay pinned while details scroll.
+Below 90 columns, `Tab` opens details across the terminal width. Account names
+are resolved once per distinct UID in each scan on Unix; an unresolved account
+still shows its UID. Windows account ownership is unavailable.
 
 Recognizable Chromium launch flags add roles such as renderer, GPU process, or
 network service. A main process is recognized from those flags in its observed

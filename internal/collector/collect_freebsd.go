@@ -221,6 +221,7 @@ func collectApps(totalKB int64) []AppStat {
 		g.count++
 		g.children = append(g.children, ProcDetail{
 			PID:       pid,
+			UID:       strconv.FormatUint(uint64(kp.Uid), 10),
 			StartTime: uint64(kp.Start.Sec)*1000000 + uint64(kp.Start.Usec),
 			SwapKnown: true,
 			Cmdline:   cmdlineDisplay(pid),

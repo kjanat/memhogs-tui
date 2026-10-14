@@ -36,33 +36,9 @@ func (m Model) View() tea.View {
 	apps := m.sortedApps()
 	rows := m.visibleRows(apps)
 
-	// Layout: sidebar appears at ≥90 cols
-	hasSide := m.width >= 90
 	mainH := max(m.height-1, 0) // 1 for status bar
-
-	var sideW, tableW int
-	if hasSide {
-		sideW = min(m.width*3/10, 36)
-		sideW = max(sideW, 28)
-		tableW = m.width - sideW
-	} else {
-		tableW = m.width
-	}
-
-	table := m.viewTable(rows, tableW, mainH)
-	tablePane := lipgloss.NewStyle().Width(tableW).Height(mainH).MaxHeight(mainH).Render(table)
-
-	var body string
-	if hasSide {
-		side := m.viewSide(rows, sideW-2)
-		sidePane := sidebarStyle.Width(sideW).Height(mainH).MaxHeight(mainH).Render(side)
-		body = lipgloss.JoinHorizontal(lipgloss.Top, tablePane, sidePane)
-	} else {
-		body = tablePane
-	}
-
 	status := m.viewStatus(m.width)
-	out := body + "\n" + status
+	out := m.viewBody(rows, mainH) + "\n" + status
 
 	// Modal overlays replace the whole screen
 	if m.killConfirm {
@@ -219,6 +195,7 @@ func (m Model) viewSide(rows []VisibleRow, width int) string {
 		} else {
 			sections = append(sections, m.viewDetail(r.App, width))
 		}
+		sections = append(sections, m.viewProcessContext(r, width))
 	}
 
 	sections = append(sections, m.viewSystem(width))
@@ -238,54 +215,36 @@ func (m Model) viewSide(rows []VisibleRow, width int) string {
 
 func (m Model) viewDetail(a collector.AppStat, width int) string {
 	rows := []string{
-		titleStyle.Width(width).Render("▸ " + appLabel(a)),
-		kvRow("RSS", fmt.Sprintf("%d MiB", a.RSSKB/1024), width),
-		kvRow(m.secondaryLabel(), m.appSecondaryText(a), width),
-		kvRow("Procs", fmt.Sprintf("%d", a.ProcCount), width),
-		kvRow("Mem%", fmt.Sprintf("%.1f%%", a.MemPct), width),
-		kvRow("CPU%", cpuText(a.CPUPct, a.CPUKnown), width),
+		titleStyle.Render(fitText("▸ "+appLabel(a), width)),
+		valueStyle.Render(fmt.Sprintf("RSS %d MiB · %s %s", a.RSSKB/1024, m.secondaryLabel(), m.appSecondaryText(a))),
+		valueStyle.Render(fmt.Sprintf("CPU %s · %.1f%% RAM · %d procs", cpuText(a.CPUPct, a.CPUKnown), a.MemPct, a.ProcCount)),
 	}
 
-	// Always reserve delta rows to prevent layout jitter
 	dRSS, dSwap := m.delta(a.GroupID)
 	if dRSS != 0 {
 		rows = append(rows, fmtDelta("Δ RSS", dRSS, width))
-	} else {
-		rows = append(rows, strings.Repeat(" ", width))
 	}
 	if dSwap != 0 && a.SwapKnown && !m.snap.ProcessCommit {
 		rows = append(rows, fmtDelta("Δ Swap", dSwap, width))
-	} else {
-		rows = append(rows, strings.Repeat(" ", width))
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
 // viewDetailChild renders the detail panel for a single highlighted process
-// within an expanded group. Unlike viewDetail it shows the PID and command
-// line; Mem% is computed against total RAM since ProcDetail carries no
-// precomputed percentage, and per-PID deltas are not tracked.
+// within an expanded group. Mem% is computed against total RAM since ProcDetail
+// carries no precomputed percentage, and per-PID deltas are not tracked.
 func (m Model) viewDetailChild(name string, c collector.ProcDetail, width int) string {
 	var memPct float64
 	if total := m.snap.System.MemTotalKB; total > 0 {
 		memPct = float64(c.RSSKB) / float64(total) * 100
 	}
 
-	// Reserve the last two rows (matching viewDetail's height) for the command
-	// line. Truncate to a single line — wrapping a long cmdline would jitter
-	// the layout as the cursor moves between rows.
-
-	rows := make([]string, 0, 7)
-	rows = append(rows,
-		titleStyle.Width(width).Render(fmt.Sprintf("▸ %s [%d]", displayText(name), c.PID)),
-		kvRow("RSS", fmt.Sprintf("%d MiB", c.RSSKB/1024), width),
-		kvRow(m.secondaryLabel(), m.childSecondaryText(c), width),
-		kvRow("Mem%", fmt.Sprintf("%.1f%%", memPct), width),
-		kvRow("CPU%", cpuText(c.CPUPct, c.CPUKnown), width),
-		sectionStyle.Width(width).Render("c: full command / directory"),
-		dimStyle.Width(width).Render(fitText(processSummary(name, c), width)),
-	)
+	rows := []string{
+		titleStyle.Render(fitText(fmt.Sprintf("▸ %s [%d]", displayText(name), c.PID), width)),
+		valueStyle.Render(fmt.Sprintf("RSS %d MiB · %s %s", c.RSSKB/1024, m.secondaryLabel(), m.childSecondaryText(c))),
+		valueStyle.Render(fmt.Sprintf("CPU %s · %.1f%% RAM", cpuText(c.CPUPct, c.CPUKnown), memPct)),
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
@@ -417,6 +376,8 @@ func (m Model) viewStatus(w int) string {
 		left = " / " + m.input.View()
 	} else if m.status != "" {
 		left = " " + displayText(m.status)
+	} else {
+		left = " Tab details · PgUp/PgDn page · c command · ? help"
 	}
 
 	if m.err != nil {
@@ -430,7 +391,7 @@ func (m Model) viewStatus(w int) string {
 	rightW := lipgloss.Width(right)
 	gap := max(w-leftW-rightW, 0)
 
-	return statusStyle.Render(left + strings.Repeat(" ", gap) + right)
+	return ansi.Truncate(statusStyle.Render(left+strings.Repeat(" ", gap)+right), max(w, 0), "")
 }
 
 func (m Model) viewKillModal() string {
@@ -475,8 +436,10 @@ func (m Model) viewKillModal() string {
 func (m Model) viewHelpModal() string {
 	help := titleStyle.Render("memhogs — memory hog monitor") + "\n\n" +
 		sectionStyle.Render("Navigation") + "\n" +
-		"  " + helpKeyStyle.Render("↑/k") + "  Move up\n" +
-		"  " + helpKeyStyle.Render("↓/j") + "  Move down\n\n" +
+		"  " + helpKeyStyle.Render("↑/k ↓/j") + "  Move selection\n" +
+		"  " + helpKeyStyle.Render("PgUp/PgDn") + "  Page through rows or details\n" +
+		"  " + helpKeyStyle.Render("Home/End") + "  First/last row or detail\n" +
+		"  " + helpKeyStyle.Render("Tab") + "  Switch table/details focus\n" +
 		sectionStyle.Render("Actions") + "\n" +
 		"  " + helpKeyStyle.Render("↵") + "    Fold/unfold group\n" +
 		"  " + helpKeyStyle.Render("c") + "    Inspect full command(s)\n" +

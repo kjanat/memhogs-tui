@@ -47,5 +47,10 @@ func CollectGrouped(mode Grouping) (*Snapshot, error) {
 	if err := ValidateGrouping(mode); err != nil {
 		return nil, err
 	}
-	return collect(mode)
+	snapshot, err := collect(mode)
+	if err != nil {
+		return nil, err
+	}
+	resolveAccountNames(snapshot.Apps, lookupAccount)
+	return snapshot, nil
 }
