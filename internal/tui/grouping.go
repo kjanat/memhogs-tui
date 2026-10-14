@@ -3,7 +3,6 @@ package tui
 import (
 	"cmp"
 	"fmt"
-	"strings"
 
 	"memhogs.kjanat.dev/internal/collector"
 )
@@ -23,8 +22,7 @@ func killScope(row VisibleRow) string {
 	if row.Kind == RowChild {
 		return "single process"
 	}
-	mode, _, _ := strings.Cut(row.App.GroupID, ":")
-	switch collector.Grouping(mode) {
+	switch row.App.GroupID.Mode {
 	case collector.GroupApplication:
 		return fmt.Sprintf("application instance, root PID %d", row.App.Root.PID)
 	case collector.GroupTree:
@@ -35,10 +33,10 @@ func killScope(row VisibleRow) string {
 }
 
 func compareAppName(a, b collector.AppStat) int {
-	return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.GroupID, b.GroupID))
+	return cmp.Or(cmp.Compare(a.Name, b.Name), a.GroupID.Compare(b.GroupID))
 }
 
-func findGroup(apps []collector.AppStat, id string) (collector.AppStat, bool) {
+func findGroup(apps []collector.AppStat, id collector.GroupID) (collector.AppStat, bool) {
 	for _, app := range apps {
 		if app.GroupID == id {
 			return app, true
@@ -48,7 +46,7 @@ func findGroup(apps []collector.AppStat, id string) (collector.AppStat, bool) {
 }
 
 func (m Model) pruneExpanded() {
-	active := make(map[string]bool)
+	active := make(map[collector.GroupID]bool)
 	if m.snap != nil {
 		for _, app := range m.snap.Apps {
 			active[app.GroupID] = true

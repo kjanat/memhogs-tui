@@ -14,7 +14,7 @@ func TestTablePageNavigation(t *testing.T) {
 		pids[i] = i + 1
 	}
 	m := testModel(testApp("workers", 40960, pids...))
-	m.expanded["workers"] = true
+	m.expanded[testGroupID("workers")] = true
 	for _, tt := range []struct {
 		code   rune
 		cursor int

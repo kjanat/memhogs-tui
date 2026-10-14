@@ -25,7 +25,7 @@ func sampledCPUModel(t *testing.T) (Model, *collector.Snapshot) {
 	if m.snap.Apps[0].CPUKnown {
 		t.Fatal("first sample CPU should be unavailable")
 	}
-	m.expanded["a"] = true
+	m.expanded[testGroupID("a")] = true
 	m.cursor = 1 // PID 1: selection must survive child CPU reordering
 	next := collector.WithCPU(m.snap, nil)
 	next.Apps[0].Children[0].CPUTime += .5
@@ -70,7 +70,7 @@ func TestCPUColumnVisibleAndAligned(t *testing.T) {
 	app.CPUPct, app.CPUKnown = 150, true
 	app.Children[0].CPUPct, app.Children[0].CPUKnown = 150, true
 	m := testModel(app)
-	m.expanded[app.Name] = true
+	m.expanded[app.GroupID] = true
 	rows := m.visibleRows(m.sortedApps())
 	for _, width := range []int{61, 80, 120} {
 		lines := strings.Split(ansi.Strip(m.viewTable(rows, width, 8)), "\n")

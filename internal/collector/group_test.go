@@ -6,12 +6,12 @@ import (
 )
 
 func TestBuildAppStatsRetainsAllEligibleGroups(t *testing.T) {
-	groups := make(map[string]*appGroup)
+	groups := make(map[GroupID]*appGroup)
 	for i := range 40 {
 		rss := int64(2048 + i*1024)
-		groups[fmt.Sprintf("app-%02d", i)] = &appGroup{rssKB: rss, count: 1, children: []ProcDetail{{PID: i + 1, RSSKB: rss, SwapKnown: true}}}
+		groups[executableNameID(fmt.Sprintf("app-%02d", i))] = &appGroup{rssKB: rss, count: 1, children: []ProcDetail{{PID: i + 1, RSSKB: rss, SwapKnown: true}}}
 	}
-	groups["small"] = &appGroup{rssKB: 1024}
+	groups[executableNameID("small")] = &appGroup{rssKB: 1024}
 	apps := buildAppStats(groups, 100*1024)
 	if len(apps) != 40 {
 		t.Fatalf("got %d groups, want 40", len(apps))
@@ -28,7 +28,7 @@ func TestBuildAppStatsRetainsAllEligibleGroups(t *testing.T) {
 
 func TestBuildAppStatsUnknownAndKnownZeroMetrics(t *testing.T) {
 	children := []ProcDetail{{PID: 2, RSSKB: 2048, SwapKnown: true, CommitKnown: true, CommitKB: 1024}, {PID: 1, RSSKB: 2048, SwapKnown: true, CommitKnown: true, CommitKB: 2048}}
-	groups := map[string]*appGroup{"app": {rssKB: 4096, count: 2, children: children}}
+	groups := map[GroupID]*appGroup{executableNameID("app"): {rssKB: 4096, count: 2, children: children}}
 	a := buildAppStats(groups, 0)[0]
 	if !a.SwapKnown || a.SwapKB != 0 || !a.CommitKnown || a.CommitKB != 3072 || a.MemPct != 0 || a.Children[0].PID != 1 {
 		t.Fatalf("bad aggregate: %+v", a)
@@ -42,7 +42,7 @@ func TestBuildAppStatsUnknownAndKnownZeroMetrics(t *testing.T) {
 }
 
 func TestBuildAppStatsDeterministicTies(t *testing.T) {
-	groups := map[string]*appGroup{"z": {rssKB: 2048}, "a": {rssKB: 2048}}
+	groups := map[GroupID]*appGroup{executableNameID("z"): {rssKB: 2048}, executableNameID("a"): {rssKB: 2048}}
 	apps := buildAppStats(groups, 0)
 	if apps[0].Name != "a" {
 		t.Fatal("RSS ties must sort by name")
@@ -50,10 +50,10 @@ func TestBuildAppStatsDeterministicTies(t *testing.T) {
 }
 
 func TestBuildAppStatsRetainsSwappedOrCommittedGroupsWithLowRSS(t *testing.T) {
-	groups := map[string]*appGroup{
-		"swapped":   {swapKB: 8192, count: 1, children: []ProcDetail{{PID: 1, SwapKB: 8192, SwapKnown: true}}},
-		"committed": {count: 1, children: []ProcDetail{{PID: 2, CommitKB: 8192, CommitKnown: true}}},
-		"empty":     {},
+	groups := map[GroupID]*appGroup{
+		executableNameID("swapped"):   {swapKB: 8192, count: 1, children: []ProcDetail{{PID: 1, SwapKB: 8192, SwapKnown: true}}},
+		executableNameID("committed"): {count: 1, children: []ProcDetail{{PID: 2, CommitKB: 8192, CommitKnown: true}}},
+		executableNameID("empty"):     {},
 	}
 	apps := buildAppStats(groups, 0)
 	if len(apps) != 2 {

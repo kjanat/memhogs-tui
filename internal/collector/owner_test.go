@@ -10,6 +10,7 @@ func TestResolveAccountNames(t *testing.T) {
 		{Children: []ProcDetail{{UID: "1000"}, {UID: "0"}, {UID: "missing"}}},
 		{Children: []ProcDetail{{UID: "1000"}, {UID: "missing"}, {}}},
 	}
+	apps[1].RootProcess = &ProcDetail{UID: "1000"}
 	calls := make(map[string]int)
 	resolveAccountNames(apps, func(uid string) string {
 		calls[uid]++
@@ -23,5 +24,8 @@ func TestResolveAccountNames(t *testing.T) {
 	}
 	if apps[1].Children[1].User != "" || apps[1].Children[2].User != "" {
 		t.Fatal("unknown or missing accounts must remain unavailable")
+	}
+	if apps[1].RootProcess.User != "alice" {
+		t.Fatal("identity-only root account name unavailable")
 	}
 }

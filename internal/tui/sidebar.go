@@ -46,6 +46,9 @@ func selectedProcess(row VisibleRow) (collector.ProcDetail, bool) {
 			return process, true
 		}
 	}
+	if process := row.App.RootProcess; process != nil && process.PID == row.App.Root.PID && process.StartTime == row.App.Root.StartTime {
+		return *process, true
+	}
 	if len(row.App.Children) == 1 {
 		return row.App.Children[0], true
 	}

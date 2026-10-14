@@ -23,7 +23,9 @@ or workspace. Group identity uses the root PID and creation time. Inferred
 application names and workspace labels can change without changing that identity.
 For example, ChatGPT and Bitwarden using the same Electron binary have separate
 totals and termination scopes. Package paths, rather than friendly class names,
-establish package boundaries within those families.
+provide application evidence. Verified ancestry and the nearest main process
+establish the running instance; a renderer's package-path alias does not create
+a new instance. Separate main processes stay separate even with identical packages.
 
 Choose the grouping explicitly when needed:
 
@@ -34,9 +36,13 @@ memhogs-tui --group tree         # include different executables in an observed 
 ```
 
 Application grouping follows observed same-executable ancestors, including across
-sandbox helpers, and respects distinct recorded sessions and package boundaries.
+sandbox helpers, and respects distinct recorded sessions and application mains.
 It does not automatically include every helper running a different executable;
 tree grouping does that. Tree traversal stops at shells and session managers.
+For example, a Node-based Claude ACP adapter launched by Zed has its own
+application group, with Zed shown as its launcher. Use `--group tree` to account
+for that adapter and other descendants inside Zed's group instead. Terminating
+that tree therefore has a wider scope than terminating the adapter alone.
 Missing ancestry stays separate rather than being joined by a matching display
 name. If a root exits or becomes unreadable, its children can become separate
 groups on the next sample; no ownership is invented from past labels.
@@ -46,6 +52,11 @@ grouping; application and tree modes report their Linux requirement.
 Instance rows include their root PID and available workspace. The header shows
 the grouping mode, and termination confirmation states whether the selection is
 one process, one application instance, a tree, or a broad executable group.
+Group identities carry the strategy and either the verified root lifetime or
+executable identity, separately from display labels and package hints. Linux
+executable identity includes the observed path, device, and inode; unreadable
+executables fall back to individual process lifetimes. Other platforms retain
+their available executable/process-name grouping.
 
 | Key                           | Action                                                                                                                |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------- |
@@ -70,6 +81,11 @@ PIDs when the dialog opens, checks creation time before signaling each process,
 and reports failures for individual PIDs. Processes that join a group afterward
 are outside that captured scope. On Windows both termination keys use
 `TerminateProcess`.
+
+Confirmation shows the grouping mode, exact captured process count, and PID list.
+An application or tree group with inconsistent ownership evidence cannot be
+terminated in bulk; select a child process instead. Explicit executable grouping
+retains its broad scope, which can include several applications or launches.
 
 Creation-time checks reduce PID-reuse risk. On Linux, Go uses a pidfd when the
 kernel and runtime support it; other Unix platforms and Linux fallback paths can
@@ -141,9 +157,11 @@ network service. A main process is recognized from those flags in its observed
 process family, including browsers absent from any application-name list. These
 roles do not identify individual browser tabs or sites. Generic command summaries
 keep leading actions and leave complete launch arguments in the `c` inspector.
-Terminals are shown when readable. Processes
-with neither resident nor swapped memory, including zombies, are excluded from
-Linux memory groups. Child sorting follows RSS, swap or commit, name, or CPU;
+Terminals are shown when readable. Processes with neither resident nor swapped
+memory, including zombies, remain in Linux's ancestry graph but contribute no
+memory rows or captured kill targets. Their metadata can still identify an
+application root or intermediary. Ownership is recomputed from each snapshot;
+there is no persistent process registry. Child sorting follows RSS, swap or commit, name, or CPU;
 process-count sorting uses RSS within each group.
 
 On Linux, Claude rows put the recorded session start directory first, followed

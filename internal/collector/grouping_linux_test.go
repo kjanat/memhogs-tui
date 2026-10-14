@@ -45,7 +45,7 @@ func TestApplicationGroupsSeparatePackagesAndInstances(t *testing.T) {
 		t.Fatalf("got %d groups, want three independent roots: %+v", len(apps), apps)
 	}
 	want := map[int][]int{10: {10, 11, 12}, 20: {20, 21}, 30: {30, 31}}
-	ids := make(map[string]bool)
+	ids := make(map[GroupID]bool)
 	for _, app := range apps {
 		requireCPU(t, !ids[app.GroupID], "group identity collision")
 		ids[app.GroupID] = true

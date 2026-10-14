@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -392,24 +393,32 @@ func readProcess(dir string) (string, ProcDetail, bool) {
 		return "", ProcDetail{}, false
 	}
 	rss, swap, known, uid := procStatus(dir)
-	if rss <= 0 && swap <= 0 {
-		return "", ProcDetail{}, false
-	} // zombies and tasks with neither resident nor swapped memory
 	cwd, terminal := processContext(dir)
 	args := splitCmdline(dir)
 	cmdline := formatCmdline(args)
 	executable, _ := os.Readlink(filepath.Join(dir, "exe"))
+	executableID := readExecutableIdentity(dir, executable)
 	raw, err := os.ReadFile(filepath.Join(dir, "stat"))
 	at := time.Now()
 	end, identityErr := parseStartTime(string(raw))
 	if err != nil || identityErr != nil || start != end {
 		return "", ProcDetail{}, false
 	}
-	p := ProcDetail{StartTime: start, ParentPID: parent, Executable: executable, Args: args, Cmdline: cmdline, Cwd: cwd, Terminal: terminal, UID: uid, RSSKB: rss, SwapKB: swap, SwapKnown: known}
+	p := ProcDetail{StartTime: start, ParentPID: parent, Executable: executable, ExecutableID: executableID, Args: args, Cmdline: cmdline, Cwd: cwd, Terminal: terminal, UID: uid, RSSKB: rss, SwapKB: swap, SwapKnown: known}
 	if seconds, ok := parseCPUTime(string(raw), clockTicks()); ok {
 		p.CPUTime, p.CPUAt = seconds, at
 	}
 	return name, p, true
+}
+
+func readExecutableIdentity(dir, executable string) ExecutableIdentity {
+	identity := ExecutableIdentity{Path: strings.TrimSuffix(executable, " (deleted)")}
+	if info, err := os.Stat(filepath.Join(dir, "exe")); err == nil {
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+			identity.Device, identity.Inode = stat.Dev, stat.Ino
+		}
+	}
+	return identity
 }
 
 func processContext(dir string) (cwd, terminal string) {

@@ -9,13 +9,12 @@ import (
 // [AppStat] entries. Groups with RSS ≤ 1 MiB and no swap or commit are excluded.
 // Results are sorted
 // by RSS descending. Presentation limits belong in the TUI.
-func buildAppStats(groups map[string]*appGroup, totalKB int64) []AppStat {
+func buildAppStats(groups map[GroupID]*appGroup, totalKB int64) []AppStat {
 	apps := make([]AppStat, 0, len(groups))
 	for id, g := range groups {
 		name := g.name
 		if name == "" {
-			name = id
-			id = "executable:" + id
+			name = id.Executable.Path
 		}
 		pct := 0.0
 		if totalKB > 0 {
@@ -38,6 +37,7 @@ func buildAppStats(groups map[string]*appGroup, totalKB int64) []AppStat {
 			GroupID:     id,
 			Name:        name,
 			Root:        g.root,
+			RootProcess: g.rootProcess,
 			Directory:   g.directory,
 			RSSKB:       g.rssKB,
 			SwapKB:      g.swapKB,
@@ -51,7 +51,7 @@ func buildAppStats(groups map[string]*appGroup, totalKB int64) []AppStat {
 	}
 
 	slices.SortFunc(apps, func(a, b AppStat) int {
-		return cmp.Or(cmp.Compare(b.RSSKB, a.RSSKB), cmp.Compare(a.Name, b.Name), cmp.Compare(a.GroupID, b.GroupID))
+		return cmp.Or(cmp.Compare(b.RSSKB, a.RSSKB), cmp.Compare(a.Name, b.Name), a.GroupID.Compare(b.GroupID))
 	})
 	return apps
 }

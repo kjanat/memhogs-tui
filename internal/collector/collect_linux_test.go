@@ -161,7 +161,7 @@ func TestCmdlineDisplayPreservesRewrittenArgv(t *testing.T) {
 	}
 }
 
-func TestReadProcessExcludesZombie(t *testing.T) {
+func TestReadProcessRetainsZeroMemoryIdentity(t *testing.T) {
 	dir := t.TempDir()
 	fields := make([]string, 20)
 	for i := range fields {
@@ -174,8 +174,9 @@ func TestReadProcessExcludesZombie(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, _, ok := readProcess(dir); ok {
-		t.Fatal("zombie counted as a memory-holding process")
+	_, process, ok := readProcess(dir)
+	if !ok || process.StartTime != 100 || memoryConsumer(process) {
+		t.Fatal("zero-memory identity must remain in the ancestry graph without becoming a memory consumer")
 	}
 }
 

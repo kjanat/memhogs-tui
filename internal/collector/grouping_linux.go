@@ -3,15 +3,17 @@
 package collector
 
 import (
-	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
 )
 
 func groupProcesses(processes map[int]*collectedProcess, totalKB int64, mode Grouping) []AppStat {
-	groups := make(map[string]*appGroup)
+	groups := make(map[GroupID]*appGroup)
 	for _, process := range processes {
+		if !memoryConsumer(process.detail) {
+			continue // identity-only ancestors do not contribute rows or kill targets
+		}
 		id, descriptor := processGroup(process, processes, mode)
 		group := groups[id]
 		if group == nil {
@@ -26,7 +28,7 @@ func groupProcesses(processes map[int]*collectedProcess, totalKB int64, mode Gro
 	return buildAppStats(groups, totalKB)
 }
 
-func processGroup(process *collectedProcess, processes map[int]*collectedProcess, mode Grouping) (string, *appGroup) {
+func processGroup(process *collectedProcess, processes map[int]*collectedProcess, mode Grouping) (GroupID, *appGroup) {
 	if mode == GroupExecutable {
 		return executableGroup(process)
 	}
@@ -35,8 +37,9 @@ func processGroup(process *collectedProcess, processes map[int]*collectedProcess
 		root = processTreeRoot(process, processes)
 	}
 	identity := ProcessIdentity{PID: root.detail.PID, StartTime: root.detail.StartTime}
-	id := fmt.Sprintf("%s:%d:%d", mode, identity.PID, identity.StartTime)
-	group := &appGroup{name: root.name, root: identity, directory: root.detail.Cwd}
+	id := GroupID{Mode: mode, Root: identity}
+	rootDetail := root.detail
+	group := &appGroup{name: root.name, root: identity, rootProcess: &rootDetail, directory: root.detail.Cwd}
 	if ctx := root.detail.Context; ctx != nil {
 		group.name, group.directory = ctx.Application, ctx.ProjectDir
 	}
@@ -46,12 +49,21 @@ func processGroup(process *collectedProcess, processes map[int]*collectedProcess
 	return id, group
 }
 
-func executableGroup(process *collectedProcess) (string, *appGroup) {
-	key, name := process.name, process.name
+func executableGroup(process *collectedProcess) (GroupID, *appGroup) {
+	identity, name := process.detail.ExecutableID, process.name
 	if executable := strings.TrimSuffix(process.detail.Executable, " (deleted)"); executable != "" {
-		key, name = executable, filepath.Base(executable)
+		identity.Path, name = executable, filepath.Base(executable)
 	}
-	return "executable:" + key, &appGroup{name: name}
+	id := GroupID{Mode: GroupExecutable, Executable: identity}
+	if identity.Path == "" {
+		// An unreadable executable is not evidence that two namesakes share it.
+		id.Root = ProcessIdentity{PID: process.detail.PID, StartTime: process.detail.StartTime}
+	}
+	return id, &appGroup{name: name}
+}
+
+func memoryConsumer(p ProcDetail) bool {
+	return p.RSSKB > 0 || p.SwapKB > 0 || p.CommitKB > 0
 }
 
 func applicationRoot(process *collectedProcess, processes map[int]*collectedProcess) *collectedProcess {

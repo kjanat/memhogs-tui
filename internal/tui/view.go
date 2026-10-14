@@ -415,6 +415,7 @@ func (m Model) viewKillModal() string {
 
 	content := fmt.Sprintf(
 		"%s  Kill %s?\n\n"+
+			"  Grouping: %s\n"+
 			"  Scope:   %s\n"+
 			"  Signal:  %s\n"+
 			"  Procs:   %d\n"+
@@ -423,6 +424,7 @@ func (m Model) viewKillModal() string {
 			"  %s confirm    %s cancel",
 		lipgloss.NewStyle().Foreground(colorDanger).Bold(true).Render("⚠"),
 		titleStyle.Render(title),
+		r.App.GroupID.Mode,
 		killScope(r),
 		killSignalName(m.killForce), procs, rssKB/1024,
 		cmd,

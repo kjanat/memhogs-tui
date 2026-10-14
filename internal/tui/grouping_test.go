@@ -10,16 +10,19 @@ import (
 	"memhogs.kjanat.dev/internal/collector"
 )
 
-func instanceApp(id, name string, root int, rss int64, pids ...int) collector.AppStat {
+func instanceApp(name string, root int, start uint64, rss int64, pids ...int) collector.AppStat {
 	app := testApp(name, rss, pids...)
-	app.GroupID = id
-	app.Root = collector.ProcessIdentity{PID: root, StartTime: 1}
+	app.GroupID = collector.GroupID{Mode: collector.GroupApplication, Root: collector.ProcessIdentity{PID: root, StartTime: start}}
+	app.Root = app.GroupID.Root
+	for i := range app.Children {
+		app.Children[i].Context = &collector.ProcessContext{ApplicationPID: root, ApplicationStart: start}
+	}
 	return app
 }
 
 func TestDuplicateGroupNamesHaveIndependentState(t *testing.T) {
-	a := instanceApp("application:10:1", "editor", 10, 8192, 10, 11)
-	b := instanceApp("application:20:1", "editor", 20, 4096, 20, 21)
+	a := instanceApp("editor", 10, 1, 8192, 10, 11)
+	b := instanceApp("editor", 20, 1, 4096, 20, 21)
 	m := testModel(a, b)
 	m.cursor = 1
 	m, _ = updateModel(m, tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -42,10 +45,10 @@ func TestDuplicateGroupNamesHaveIndependentState(t *testing.T) {
 }
 
 func TestNewRootLifetimeDoesNotInheritGroupHistory(t *testing.T) {
-	old := instanceApp("application:10:1", "editor", 10, 4096, 10, 11)
+	old := instanceApp("editor", 10, 1, 4096, 10, 11)
 	m := testModel(old)
 	m.expanded[old.GroupID] = true
-	next := instanceApp("application:10:2", "editor", 10, 8192, 10, 12)
+	next := instanceApp("editor", 10, 2, 8192, 10, 12)
 	next.Root.StartTime = 2
 	for i := range next.Children {
 		next.Children[i].StartTime = 2
@@ -58,8 +61,8 @@ func TestNewRootLifetimeDoesNotInheritGroupHistory(t *testing.T) {
 }
 
 func TestFrozenKillTargetsOnlyOneApplicationInstance(t *testing.T) {
-	a := instanceApp("application:10:1", "ChatGPT", 10, 8192, 10, 11)
-	b := instanceApp("application:20:1", "ChatGPT", 20, 4096, 20, 21)
+	a := instanceApp("ChatGPT", 10, 1, 8192, 10, 11)
+	b := instanceApp("ChatGPT", 20, 1, 4096, 20, 21)
 	b.Directory = "/projects/second"
 	m := testModel(a, b)
 	m.cursor = 1
@@ -71,7 +74,7 @@ func TestFrozenKillTargetsOnlyOneApplicationInstance(t *testing.T) {
 	m = m.beginKill(false)
 	before := m.viewKillModal()
 	require(t, strings.Contains(before, "application instance, root PID 20") && strings.Contains(before, "second"), "confirmation lost instance scope: %s", before)
-	replacement := instanceApp("application:20:2", "ChatGPT", 20, 32768, 20, 29)
+	replacement := instanceApp("ChatGPT", 20, 2, 32768, 20, 29)
 	replacement.Root.StartTime = 2
 	for i := range replacement.Children {
 		replacement.Children[i].StartTime = 2
@@ -86,20 +89,20 @@ func TestFrozenKillTargetsOnlyOneApplicationInstance(t *testing.T) {
 }
 
 func TestGroupingScopeAndInstanceLabels(t *testing.T) {
-	app := instanceApp("application:10:1", "editor\x1b[2J", 10, 4096, 10)
+	app := instanceApp("editor\x1b[2J", 10, 1, 4096, 10)
 	app.Directory = "/projects/work\nspace"
 	label := appLabel(app)
 	require(t, strings.Contains(label, "[10]") && !strings.ContainsAny(label, "\x1b\n"), "unsafe or ambiguous instance label: %q", label)
-	app.GroupID = "executable:/usr/bin/editor"
+	app.GroupID = testGroupID("/usr/bin/editor")
 	require(t, strings.Contains(killScope(VisibleRow{App: app}), "all listed instances"), "broad grouping scope hidden")
-	app.GroupID = "tree:10:1"
+	app.GroupID = collector.GroupID{Mode: collector.GroupTree, Root: app.Root}
 	require(t, strings.Contains(killScope(VisibleRow{App: app}), "process tree"), "tree scope hidden")
 	require(t, killScope(VisibleRow{Kind: RowChild, App: app}) == "single process", "child acquired group scope")
 }
 
 func TestNamesakeGroupSortsUseStableIdentityTies(t *testing.T) {
-	a := instanceApp("application:10:1", "editor", 10, 4096, 10)
-	b := instanceApp("application:20:1", "editor", 20, 4096, 20)
+	a := instanceApp("editor", 10, 1, 4096, 10)
+	b := instanceApp("editor", 20, 1, 4096, 20)
 	m := testModel(b, a)
 	for mode := range sortModeCount {
 		m.sort = mode

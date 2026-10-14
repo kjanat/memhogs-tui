@@ -32,8 +32,8 @@ func TestProcessContextDistinguishesSharedRuntimeApplications(t *testing.T) {
 		t.Fatalf("ChatGPT context: %+v", chat)
 	}
 	sandboxed := processes[16].detail.Context
-	if sandboxed.Application != "ChatGPT" || sandboxed.ProjectDir != "~" {
-		t.Fatalf("sandbox helper hid application: %+v", sandboxed)
+	if sandboxed.ApplicationPID != 16 || sandboxed.ApplicationStart != 100 {
+		t.Fatalf("unreadable executable borrowed another process's identity: %+v", sandboxed)
 	}
 	bitwarden := processes[21].detail.Context
 	if bitwarden.Application != "bitwarden" || bitwarden.ApplicationPID != 20 || !bitwarden.Chromium {

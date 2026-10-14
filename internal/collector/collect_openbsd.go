@@ -168,7 +168,7 @@ func collectApps(totalKB int64) []AppStat {
 	n := len(raw) / sizeofKinfoProc
 	pagesize := int64(unix.Getpagesize())
 
-	groups := make(map[string]*appGroup)
+	groups := make(map[GroupID]*appGroup)
 	for i := range n {
 		kp := (*kinfoProc)(unsafe.Pointer(&raw[i*sizeofKinfoProc : (i+1)*sizeofKinfoProc][0]))
 		pid := int(kp.Pid)
@@ -184,10 +184,11 @@ func collectApps(totalKB int64) []AppStat {
 		rssKB := int64(kp.VmRssize) * pagesize / 1024
 		name := comm
 
-		g, ok := groups[name]
+		id := executableNameID(name)
+		g, ok := groups[id]
 		if !ok {
 			g = &appGroup{}
-			groups[name] = g
+			groups[id] = g
 		}
 		g.rssKB += rssKB
 		g.count++

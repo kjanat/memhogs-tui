@@ -14,17 +14,23 @@ func lookupAccount(uid string) string {
 func resolveAccountNames(apps []AppStat, lookup func(string) string) {
 	names := make(map[string]string)
 	for i := range apps {
+		if process := apps[i].RootProcess; process != nil {
+			resolveProcessAccount(process, names, lookup)
+		}
 		for j := range apps[i].Children {
-			process := &apps[i].Children[j]
-			if process.UID == "" {
-				continue
-			}
-			name, found := names[process.UID]
-			if !found {
-				name = lookup(process.UID)
-				names[process.UID] = name
-			}
-			process.User = name
+			resolveProcessAccount(&apps[i].Children[j], names, lookup)
 		}
 	}
+}
+
+func resolveProcessAccount(process *ProcDetail, names map[string]string, lookup func(string) string) {
+	if process.UID == "" {
+		return
+	}
+	name, found := names[process.UID]
+	if !found {
+		name = lookup(process.UID)
+		names[process.UID] = name
+	}
+	process.User = name
 }

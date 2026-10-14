@@ -85,7 +85,7 @@ func TestCPUObservesBusyProcess(t *testing.T) {
 
 func waitForShellCPU(t *testing.T, dir string) ProcDetail {
 	t.Helper()
-	// Wait for exec and its resident pages before using readProcess's memory gate.
+	// Wait for exec so the counter belongs to the requested shell image.
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		if _, p, ok := readProcess(dir); ok && len(p.Args) > 0 && p.Args[0] == "/bin/sh" {

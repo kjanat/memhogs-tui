@@ -61,7 +61,7 @@ type Model struct {
 	filter    string
 	filtering bool
 	paused    bool
-	expanded  map[string]bool // which groups are unfolded
+	expanded  map[collector.GroupID]bool // which groups are unfolded
 
 	killConfirm bool
 	killTarget  VisibleRow
@@ -115,7 +115,7 @@ func New(cfg Config) Model {
 	if grouping == "" {
 		grouping = collector.DefaultGrouping()
 	}
-	return Model{interval: d, grouping: grouping, collecting: true, signal: killProcess, input: ti, expanded: make(map[string]bool)}
+	return Model{interval: d, grouping: grouping, collecting: true, signal: killProcess, input: ti, expanded: make(map[collector.GroupID]bool)}
 }
 
 // Init starts the first collection and tick.
@@ -425,7 +425,7 @@ func (m Model) sortedApps() []collector.AppStat {
 }
 
 // delta compares one group identity; a new instance has no growth baseline.
-func (m Model) delta(id string) (rssKB, swapKB int64) {
+func (m Model) delta(id collector.GroupID) (rssKB, swapKB int64) {
 	if m.prevSnap == nil || m.snap == nil {
 		return 0, 0
 	}
@@ -478,6 +478,10 @@ func (m Model) visibleRows(apps []collector.AppStat) []VisibleRow {
 func (m Model) beginKill(force bool) Model {
 	row, ok := m.currentRow(m.visibleRows(m.sortedApps()))
 	if !ok {
+		return m
+	}
+	if problem := bulkKillProblem(row); problem != "" {
+		m.status = problem
 		return m
 	}
 	row.App.Children = slices.Clone(row.App.Children)

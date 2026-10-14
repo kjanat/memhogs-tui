@@ -42,7 +42,7 @@ func TestExpandedBrowserTableShowsRolePIDAndMetrics(t *testing.T) {
 	app.Children[0].SwapKB = 512 * 1024
 	app.Children[1].Cmdline = "GitHub9061 --type=utility --utility-sub-type=network.mojom.NetworkService --gpu-preferences=AAAAAAAA"
 	m := testModel(app)
-	m.expanded["chrome"] = true
+	m.expanded[testGroupID("chrome")] = true
 	table := m.viewTable(m.visibleRows(m.sortedApps()), 100, 10)
 	for _, value := range []string{"PROCS/PID", "renderer", "network service", "2995104", "3738480", "512MiB"} {
 		if !strings.Contains(table, value) {
@@ -70,7 +70,7 @@ func TestChildSortingMatchesActiveMetricWithoutMutation(t *testing.T) {
 	app.Children[2].Cmdline = "chrome --type=zygote"
 	before := append([]collector.ProcDetail(nil), app.Children...)
 	m := testModel(app)
-	m.expanded["chrome"] = true
+	m.expanded[testGroupID("chrome")] = true
 	for _, tt := range []struct {
 		mode SortMode
 		want int
@@ -88,7 +88,7 @@ func TestFullCommandViewerRetainsArgumentsAndCapturedSelection(t *testing.T) {
 	app := testApp("chrome", 4096, 123)
 	app.Children[0].Cmdline = "GitHub9061 --type=renderer " + strings.Repeat("--long-browser-option=abcdefghijk ", 30) + "--last-option=end\x1b[2J"
 	m := testModel(app)
-	m.expanded["chrome"] = true
+	m.expanded[testGroupID("chrome")] = true
 	m.cursor = 1
 	m, _ = updateModel(m, press('c'))
 	require(t, m.commandOpen && strings.Contains(m.commandText, "--last-option=end"), "full command lost arguments")
@@ -113,7 +113,7 @@ func TestRescueSectionStaysCompactForLargeGroup(t *testing.T) {
 	rescue := m.viewRescue(30)
 	require(t, lipgloss.Height(rescue) <= 5 && strings.Contains(rescue, "72 processes"), "rescue section filled sidebar: %s", rescue)
 	require(t, !strings.Contains(rescue, "100000"), "rescue dumped group PID list")
-	m.expanded["chrome"] = true
+	m.expanded[testGroupID("chrome")] = true
 	m.cursor = 1
 	rescue = m.viewRescue(30)
 	require(t, strings.Contains(rescue, "100000") && !strings.Contains(rescue, "100001"), "child rescue has wrong scope: %s", rescue)
@@ -127,7 +127,7 @@ func TestShellRowsExposeDirectoryAndTerminal(t *testing.T) {
 	app.Children[1].Cmdline = "zsh"
 	app.Children[1].Cwd = "~/projects/other-project"
 	m := testModel(app)
-	m.expanded["zsh"] = true
+	m.expanded[testGroupID("zsh")] = true
 	table := m.viewTable(m.visibleRows(m.sortedApps()), 140, 10)
 	for _, value := range []string{"pts/17", "memhogs-tui", "other-project", "1105020", "718890"} {
 		require(t, strings.Contains(table, value), "missing shell context %q:\n%s", value, table)
@@ -143,7 +143,7 @@ func TestClaudeSessionSummaryAndInspector(t *testing.T) {
 	summary := processSummary("claude", app.Children[0])
 	require(t, summary == "actionlint · actionlint nix [df80c404]", "wrong Claude summary: %s", summary)
 	m := testModel(app)
-	m.expanded["claude"] = true
+	m.expanded[testGroupID("claude")] = true
 	m.cursor = 1
 	m, _ = updateModel(m, press('c'))
 	for _, value := range []string{id, "actionlint nix", "Spawn dir (session): /home/user/projects/actionlint", "Current dir: /home/user/projects/other-worktree", "Entrypoint: cli"} {
@@ -210,7 +210,7 @@ func TestContextSearchAndInspectorExposeEvidence(t *testing.T) {
 	m := testModel(app)
 	m.filter = "chatgpt"
 	require(t, len(m.sortedApps()) == 1, "filter missed inferred app name")
-	m.expanded["electron"] = true
+	m.expanded[testGroupID("electron")] = true
 	m.cursor = 1
 	m, _ = updateModel(m, press('c'))
 	for _, value := range []string{"Parent PID: 110", "Executable: /usr/lib/electron42/electron", "Application: ChatGPT [PID 100]", "Directory source: application ancestor cwd", "Ancestor: electron [PID 100]", "Open resource: /usr/lib/chatgpt/resources/app.asar"} {

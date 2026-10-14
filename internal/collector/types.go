@@ -21,9 +21,10 @@ type Snapshot struct {
 // AppStat aggregates one explicitly identified group. Name is a display label;
 // GroupID is the stable key for selection, history, and termination scope.
 type AppStat struct {
-	GroupID     string          // opaque identity, independent of display name and current membership
+	GroupID     GroupID         // typed identity, independent of display name and current membership
 	Name        string          // inferred application name or executable label; never an identity
 	Root        ProcessIdentity // observed root for application/tree grouping; zero for executable groups
+	RootProcess *ProcDetail     // observed root metadata, even when it has no displayed memory
 	Directory   string          // root workspace clue for display, never part of group identity
 	RSSKB       int64           // total resident set size in KiB across all grouped processes
 	SwapKB      int64           // total swap usage in KiB
@@ -45,27 +46,28 @@ type ProcessIdentity struct {
 
 // ProcDetail holds per-PID data for an individual process within an [AppStat] group.
 type ProcDetail struct {
-	PID         int             // OS process ID
-	ParentPID   int             // observed parent PID; zero if unavailable
-	StartTime   uint64          // opaque OS creation time; PID plus StartTime identifies a process
-	Executable  string          // executable path, when readable
-	Args        []string        // original argv, when available; never execute this display metadata
-	Cmdline     string          // full command line for display when the group is expanded
-	Cwd         string          // working directory, when readable
-	Terminal    string          // controlling input terminal, when readable
-	UID         string          // effective account ID; empty when unavailable
-	User        string          // resolved account name; empty when unavailable
-	Session     *SessionInfo    // verified Claude session metadata; nil if unavailable
-	Context     *ProcessContext // common application, workspace, and ancestry context
-	RSSKB       int64           // resident set size in KiB
-	SwapKB      int64           // swap usage in KiB
-	SwapKnown   bool            // distinguishes unavailable swap from zero
-	CommitKB    int64           // Windows process commit charge in KiB
-	CommitKnown bool            // distinguishes unavailable commit from zero
-	CPUTime     float64         // cumulative user + kernel CPU time in seconds, excluding child processes
-	CPUAt       time.Time       // counter observation time; zero when unavailable
-	CPUPct      float64         // interval CPU usage; 100% is one logical CPU
-	CPUKnown    bool            // true after two valid observations of this process lifetime
+	PID          int                // OS process ID
+	ParentPID    int                // observed parent PID; zero if unavailable
+	StartTime    uint64             // opaque OS creation time; PID plus StartTime identifies a process
+	Executable   string             // executable path, when readable
+	ExecutableID ExecutableIdentity // executable file identity, when readable
+	Args         []string           // original argv, when available; never execute this display metadata
+	Cmdline      string             // full command line for display when the group is expanded
+	Cwd          string             // working directory, when readable
+	Terminal     string             // controlling input terminal, when readable
+	UID          string             // effective account ID; empty when unavailable
+	User         string             // resolved account name; empty when unavailable
+	Session      *SessionInfo       // verified Claude session metadata; nil if unavailable
+	Context      *ProcessContext    // common application, workspace, and ancestry context
+	RSSKB        int64              // resident set size in KiB
+	SwapKB       int64              // swap usage in KiB
+	SwapKnown    bool               // distinguishes unavailable swap from zero
+	CommitKB     int64              // Windows process commit charge in KiB
+	CommitKnown  bool               // distinguishes unavailable commit from zero
+	CPUTime      float64            // cumulative user + kernel CPU time in seconds, excluding child processes
+	CPUAt        time.Time          // counter observation time; zero when unavailable
+	CPUPct       float64            // interval CPU usage; 100% is one logical CPU
+	CPUKnown     bool               // true after two valid observations of this process lifetime
 }
 
 // ProcessContext describes observed ownership and workspace clues. Sources are
@@ -74,6 +76,7 @@ type ProcessContext struct {
 	Application       string            // concrete application inferred from executable/package arguments
 	ApplicationPID    int               // process providing that application identity
 	ApplicationStart  uint64            // creation time of that application root
+	PackagePath       string            // package argument observed on this process; never inherited
 	ApplicationKey    string            // normalized package path; independent of a friendly display name
 	ApplicationSource string            // evidence used for the label
 	ProjectDir        string            // observed workspace; may differ from Cwd
@@ -143,11 +146,12 @@ type OOMEntry struct {
 // appGroup accumulates per-process data while building [AppStat] entries.
 // Used internally by platform-specific collectApps implementations.
 type appGroup struct {
-	name      string
-	root      ProcessIdentity
-	directory string
-	rssKB     int64
-	swapKB    int64
-	count     int
-	children  []ProcDetail
+	name        string
+	root        ProcessIdentity
+	rootProcess *ProcDetail
+	directory   string
+	rssKB       int64
+	swapKB      int64
+	count       int
+	children    []ProcDetail
 }

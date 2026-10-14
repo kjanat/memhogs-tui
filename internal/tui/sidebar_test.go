@@ -51,6 +51,17 @@ func TestSelectedProcessUsesRootNotLargestChild(t *testing.T) {
 	require(t, strings.Contains(m.viewProcessContext(row, 48), "select a child"), "broad group needs explicit child guidance")
 }
 
+func TestSidebarCanInspectIdentityOnlyRoot(t *testing.T) {
+	m := contextModel()
+	root := m.snap.Apps[0].Children[1]
+	root.RSSKB = 0
+	m.snap.Apps[0].Children = m.snap.Apps[0].Children[:1]
+	m.snap.Apps[0].RootProcess = &root
+	row := m.visibleRows(m.sortedApps())[0]
+	p, ok := selectedProcess(row)
+	require(t, ok && p.PID == 100 && p.RSSKB == 0, "identity-only root context unavailable")
+}
+
 func TestProcessContextShowsOwnerDirectoryAndArguments(t *testing.T) {
 	m := contextModel()
 	row := m.visibleRows(m.sortedApps())[0]

@@ -91,7 +91,7 @@ func collectApps(totalKB int64) []AppStat {
 		return nil
 	}
 
-	groups := make(map[string]*appGroup)
+	groups := make(map[GroupID]*appGroup)
 	for {
 		pid := pe.ProcessID
 		if pid == 0 { // System Idle Process
@@ -106,10 +106,11 @@ func collectApps(totalKB int64) []AppStat {
 		process := procMem(pid)
 		process.PID, process.Cmdline = int(pid), exe
 
-		g, ok := groups[name]
+		id := executableNameID(name)
+		g, ok := groups[id]
 		if !ok {
 			g = &appGroup{}
-			groups[name] = g
+			groups[id] = g
 		}
 		g.rssKB += process.RSSKB
 		g.count++

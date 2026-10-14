@@ -60,6 +60,9 @@ func processContextLines(p collector.ProcDetail) []string {
 		if ctx.ApplicationKey != "" {
 			lines = append(lines, "Application package: "+displayText(ctx.ApplicationKey))
 		}
+		if ctx.PackagePath != "" {
+			lines = append(lines, "Process package: "+displayText(ctx.PackagePath))
+		}
 		if ctx.Origin != "" {
 			lines = append(lines, fmt.Sprintf("Launched via: %s [PID %d]", displayText(ctx.Origin), ctx.OriginPID))
 		}

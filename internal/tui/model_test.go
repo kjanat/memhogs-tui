@@ -22,8 +22,12 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	return next.(Model), cmd
 }
 
+func testGroupID(name string) collector.GroupID {
+	return collector.GroupID{Mode: collector.GroupExecutable, Executable: collector.ExecutableIdentity{Path: name}}
+}
+
 func testApp(name string, rss int64, pids ...int) collector.AppStat {
-	a := collector.AppStat{GroupID: name, Name: name, RSSKB: rss, ProcCount: len(pids), SwapKnown: true}
+	a := collector.AppStat{GroupID: testGroupID(name), Name: name, RSSKB: rss, ProcCount: len(pids), SwapKnown: true}
 	for _, pid := range pids {
 		a.Children = append(a.Children, collector.ProcDetail{PID: pid, StartTime: 1, Cmdline: fmt.Sprintf("%s --worker %d", name, pid), RSSKB: rss / int64(len(pids)), SwapKnown: true})
 	}
@@ -45,7 +49,7 @@ func TestSelectionFollowsGroupAndChild(t *testing.T) {
 	if m.cursor != 0 {
 		t.Fatal("selected group did not follow RSS reorder")
 	}
-	m.expanded["b"] = true
+	m.expanded[testGroupID("b")] = true
 	m.cursor = 2 // PID 3
 	b := testApp("b", 1024, 3, 2)
 	m, _ = updateModel(m, snapMsg{&collector.Snapshot{Apps: []collector.AppStat{testApp("a", 4096, 1), b}}})
@@ -77,7 +81,7 @@ func TestScrollingAndAllChildren(t *testing.T) {
 		pids[i] = i + 1
 	}
 	m := testModel(testApp("workers", 40960, pids...))
-	m.expanded["workers"] = true
+	m.expanded[testGroupID("workers")] = true
 	if len(m.visibleRows(m.sortedApps())) != 41 {
 		t.Fatal("children truncated")
 	}
@@ -106,7 +110,7 @@ func TestFrozenKillTarget(t *testing.T) {
 		t.Run(fmt.Sprint(child), func(t *testing.T) {
 			m := testModel(testApp("node workers", 8192, 10, 11), testApp("other", 4096, 20))
 			if child {
-				m.expanded["node workers"] = true
+				m.expanded[testGroupID("node workers")] = true
 				m.cursor = 2
 			}
 			var signaled []int
@@ -285,7 +289,7 @@ func TestUnknownMetricsSortAfterKnownZero(t *testing.T) {
 
 func TestTableRemainsWithinTerminalDimensions(t *testing.T) {
 	m := testModel(testApp("日本語👩‍💻long-name", 4096, 1, 2))
-	m.expanded[m.snap.Apps[0].Name] = true
+	m.expanded[m.snap.Apps[0].GroupID] = true
 	rows := m.visibleRows(m.sortedApps())
 	for _, size := range []struct{ w, h int }{{80, 9}, {40, 5}, {10, 3}, {1, 1}, {0, 0}} {
 		table := m.viewTable(rows, size.w, size.h)

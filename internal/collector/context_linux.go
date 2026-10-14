@@ -25,15 +25,15 @@ func enrichProcessContexts(processes map[int]*collectedProcess, root string) {
 		process.detail.Context.Ancestors = processAncestors(process.detail, processes)
 	}
 	for _, process := range processes {
+		if chromiumProcessType(process.detail.Arguments()) {
+			markChromiumFamily(process, processes)
+		}
+	}
+	for _, process := range processes {
 		inheritApplication(process, processes)
 	}
 	for _, process := range processes {
 		setProcessOrigin(process, processes)
-	}
-	for _, process := range processes {
-		if chromiumProcessType(process.detail.Arguments()) {
-			markChromiumFamily(process, processes)
-		}
 	}
 }
 
@@ -108,38 +108,64 @@ func processAncestors(p ProcDetail, processes map[int]*collectedProcess) []Proce
 }
 
 func sameExecutable(a, b *collectedProcess) bool {
+	aID, bID := a.detail.ExecutableID, b.detail.ExecutableID
+	if aID.Inode != 0 && bID.Inode != 0 && (aID.Inode != bID.Inode || aID.Device != bID.Device) {
+		return false
+	}
 	if a.detail.Executable != "" && b.detail.Executable != "" {
 		return strings.TrimSuffix(a.detail.Executable, " (deleted)") == strings.TrimSuffix(b.detail.Executable, " (deleted)")
 	}
-	return a.name == b.name
+	return false // a shared display name does not prove executable identity
 }
 
 func inheritApplication(process *collectedProcess, processes map[int]*collectedProcess) {
 	ctx := process.detail.Context
+	worker := chromiumProcessType(process.detail.Arguments())
+	if startsApplicationInstance(ctx, worker) {
+		return // a packaged/Chromium main process starts its own instance
+	}
 	for _, ancestor := range ctx.Ancestors {
 		parent := processes[ancestor.PID]
-		if contextBoundary(parent.name) || distinctSession(process.detail.Session, parent.detail.Session) {
+		if inheritanceBoundary(process, parent) {
 			break
 		}
 		if !sameExecutable(process, parent) {
 			continue // launchers and sandbox helpers can sit between matching executables
 		}
-		// Recompute from original arguments instead of an already inherited label.
-		application, source := applicationHint(parent)
-		if !inheritApplicationHint(ctx, application, source, applicationPackage(parent.detail.Arguments()), parent.detail) {
+		if !inheritParentContext(ctx, parent, worker) {
 			break
 		}
-		if unhelpfulDirectory(ctx.ProjectDir) && parent.detail.Cwd != "" && !strings.HasPrefix(parent.detail.Cwd, "/proc/") {
-			ctx.ProjectDir, ctx.ProjectSource = parent.detail.Cwd, "application ancestor cwd"
+		if worker && !chromiumProcessType(parent.detail.Arguments()) {
+			break // nearest verified main process, not an older independent launch
 		}
 	}
 }
 
-func inheritApplicationHint(ctx *ProcessContext, application, source, key string, parent ProcDetail) bool {
-	if ctx.ApplicationKey != "" && key != "" && ctx.ApplicationKey != key {
+func startsApplicationInstance(ctx *ProcessContext, worker bool) bool {
+	return !worker && (ctx.Chromium || ctx.PackagePath != "")
+}
+
+func inheritanceBoundary(process, parent *collectedProcess) bool {
+	return contextBoundary(parent.name) || distinctSession(process.detail.Session, parent.detail.Session)
+}
+
+func inheritParentContext(ctx *ProcessContext, parent *collectedProcess, worker bool) bool {
+	// Recompute from original arguments instead of an already inherited label.
+	application, source := applicationHint(parent)
+	if !inheritApplicationHint(ctx, application, source, applicationPackage(parent.detail.Arguments()), parent.detail, worker) {
 		return false
 	}
-	if ctx.ApplicationKey == "" || key != "" {
+	if unhelpfulDirectory(ctx.ProjectDir) && parent.detail.Cwd != "" && !strings.HasPrefix(parent.detail.Cwd, "/proc/") {
+		ctx.ProjectDir, ctx.ProjectSource = parent.detail.Cwd, "application ancestor cwd"
+	}
+	return true
+}
+
+func inheritApplicationHint(ctx *ProcessContext, application, source, key string, parent ProcDetail, worker bool) bool {
+	if !worker && ctx.ApplicationKey != "" && key != "" && ctx.ApplicationKey != key {
+		return false
+	}
+	if worker || ctx.ApplicationKey == "" || key != "" {
 		ctx.Application, ctx.ApplicationSource = application, source
 		ctx.ApplicationPID, ctx.ApplicationStart, ctx.ApplicationKey = parent.PID, parent.StartTime, key
 	}
@@ -268,7 +294,8 @@ func initializeProcessContext(process *collectedProcess, root string, sockets ma
 	application, source := applicationHint(process)
 	p.Context = &ProcessContext{
 		Application: application, ApplicationPID: p.PID, ApplicationStart: p.StartTime,
-		ApplicationKey: applicationPackage(p.Arguments()), ApplicationSource: source, ProjectDir: p.Cwd, ProjectSource: "cwd",
+		PackagePath: applicationPackage(p.Arguments()), ApplicationKey: applicationPackage(p.Arguments()),
+		ApplicationSource: source, ProjectDir: p.Cwd, ProjectSource: "cwd",
 	}
 	if !orphan || !unhelpfulDirectory(p.Cwd) {
 		return
