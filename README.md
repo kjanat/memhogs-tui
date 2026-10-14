@@ -61,7 +61,7 @@ their available executable/process-name grouping.
 | `Page Up`, `Page Down`        | Move one visible page through table rows, or scroll details when the sidebar has focus                                |
 | `Home`, `End`                 | Select the first or last visible-list row, or jump to the start or end of details                                     |
 | `Tab`, `Esc`                  | Switch between table and details; `Esc` returns from details to the table                                             |
-| `Enter`, `→` / `l`, `←` / `h` | Toggle, expand, or collapse a process group                                                                           |
+| `Enter`, `→` / `l`, `←` / `h` | Toggle/expand a group or process branch; left folds its branch or selects its parent                                  |
 | `s`                           | Cycle RSS, swap (commit on Windows), process count, name, and CPU sorting                                             |
 | `/`, `Enter`, `Esc`           | Search group names and child command lines, accept, or clear the filter                                               |
 | `p`                           | Pause or resume collection                                                                                            |
@@ -99,8 +99,9 @@ current children's usage. The first observation of a process, unreadable
 counters, and reused PIDs display `n/a` until a valid baseline exists. A group
 displays `n/a` if any current child lacks that baseline. Rates use actual elapsed
 time, including pauses or delayed refreshes, rather than the configured interval.
-CPU sorting puts measured values first, highest usage first, including within
-expanded groups. The memory eligibility threshold still applies to the list.
+CPU sorting puts measured values first, highest usage first. Expanded trees sort
+siblings while keeping parents before their descendants. The memory eligibility
+threshold still applies to the list.
 
 | Metric                  | Linux                                | macOS       | FreeBSD amd64           | OpenBSD amd64 | Windows       |
 | ----------------------- | ------------------------------------ | ----------- | ----------------------- | ------------- | ------------- |
@@ -160,6 +161,14 @@ memory rows or captured kill targets. Their metadata can still identify an
 application root or intermediary. Ownership is recomputed from each snapshot;
 there is no persistent process registry. Child sorting follows RSS, swap or commit, name, or CPU;
 process-count sorting uses RSS within each group.
+
+Expanded application and tree groups render a nested process hierarchy with
+indentation and branch guides. Descendants stay below their own parent even when
+they use more memory or CPU. Each process branch can fold independently with
+`Enter` or the arrow keys. A root's `(self)` row shows its own counters; the group
+header shows the aggregate. Process rows, including folded branches, retain
+individual-PID inspection and termination. Executable grouping keeps its flat
+ranking across instances.
 
 On Linux, Claude rows put the recorded session start directory first, followed
 by the current session name and a short session UUID, when matching metadata

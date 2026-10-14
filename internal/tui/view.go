@@ -81,7 +81,7 @@ func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 		case RowGroup:
 			b.WriteString(m.renderGroupRow(r.App, nameW, barW, maxRSS, selected))
 		case RowChild:
-			b.WriteString(m.renderChildRow(r.App.Name, r.Child, nameW, selected))
+			b.WriteString(m.renderChildRow(r, nameW, selected))
 		}
 		b.WriteByte('\n')
 	}
@@ -124,7 +124,7 @@ func tableLayout(rows []VisibleRow, w int) (nameW, barW int, maxRSS int64) {
 	for _, r := range rows {
 		label := appLabel(r.App)
 		if r.Kind == RowChild {
-			label = processSummary(r.App.Name, r.Child)
+			label = processTreePrefix(r) + processSummary(r.App.Name, r.Child)
 		}
 		nameW = max(nameW, lipgloss.Width(displayText(label)))
 		if r.Kind == RowGroup && r.App.RSSKB > maxRSS {
@@ -142,7 +142,7 @@ func (m Model) renderGroupRow(a collector.AppStat, nameW, barW int, maxRSS int64
 	name := fitText(appLabel(a), nameW)
 
 	pfx := "  "
-	if a.ProcCount > 1 {
+	if groupExpandable(a) {
 		pfx = "▸ "
 		if m.expanded[a.GroupID] {
 			pfx = "▾ "
@@ -171,13 +171,14 @@ func (m Model) renderGroupRow(a collector.AppStat, nameW, barW int, maxRSS int64
 
 // renderChildRow aligns the process role, memory counters, and PID with
 // group columns. Full launch arguments remain accessible with c.
-func (m Model) renderChildRow(app string, child collector.ProcDetail, nameW int, selected bool) string {
+func (m Model) renderChildRow(r VisibleRow, nameW int, selected bool) string {
+	child := r.Child
 	var memPct float64
 	if total := m.snap.System.MemTotalKB; total > 0 {
 		memPct = float64(child.RSSKB) / float64(total) * 100
 	}
-	row := fmt.Sprintf("↳ %s %4dMiB %7s %9d %5.1f%% %7s",
-		fitText(processSummary(app, child), nameW), child.RSSKB/1024,
+	row := fmt.Sprintf("%s %4dMiB %7s %9d %5.1f%% %7s",
+		processTreeLabel(r, nameW+2), child.RSSKB/1024,
 		m.childSecondaryText(child), child.PID, memPct, cpuText(child.CPUPct, child.CPUKnown))
 	if selected {
 		return selectedStyle.Render(row)
@@ -443,7 +444,7 @@ func (m Model) viewHelpModal() string {
 		"  " + helpKeyStyle.Render("Home/End") + "  First/last row or detail\n" +
 		"  " + helpKeyStyle.Render("Tab") + "  Switch table/details focus\n" +
 		sectionStyle.Render("Actions") + "\n" +
-		"  " + helpKeyStyle.Render("↵") + "    Fold/unfold group\n" +
+		"  " + helpKeyStyle.Render("↵ ← →") + "    Fold/unfold group or branch\n" +
 		"  " + helpKeyStyle.Render("c") + "    Inspect full command(s)\n" +
 		"  " + helpKeyStyle.Render("x") + "    " + killSignalName(false) + " selected\n" +
 		"  " + helpKeyStyle.Render("X") + "    " + killSignalName(true) + " selected\n\n" +

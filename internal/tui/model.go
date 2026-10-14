@@ -61,7 +61,8 @@ type Model struct {
 	filter    string
 	filtering bool
 	paused    bool
-	expanded  map[collector.GroupID]bool // which groups are unfolded
+	expanded  map[collector.GroupID]bool         // which groups are unfolded
+	collapsed map[collector.ProcessIdentity]bool // folded branches inside expanded groups
 
 	killConfirm bool
 	killTarget  VisibleRow
@@ -115,7 +116,7 @@ func New(cfg Config) Model {
 	if grouping == "" {
 		grouping = collector.DefaultGrouping()
 	}
-	return Model{interval: d, grouping: grouping, collecting: true, signal: killProcess, input: ti, expanded: make(map[collector.GroupID]bool)}
+	return Model{interval: d, grouping: grouping, collecting: true, signal: killProcess, input: ti, expanded: make(map[collector.GroupID]bool), collapsed: make(map[collector.ProcessIdentity]bool)}
 }
 
 // Init starts the first collection and tick.
@@ -349,16 +350,31 @@ func (m Model) currentRow(rows []VisibleRow) (VisibleRow, bool) {
 
 // toggleFold flips the expanded state of the highlighted multi-process group.
 func (m Model) toggleFold(rows []VisibleRow) Model {
-	if r, ok := m.currentRow(rows); ok && r.Kind == RowGroup && r.App.ProcCount > 1 {
-		m.expanded[r.App.GroupID] = !m.expanded[r.App.GroupID]
+	if r, ok := m.currentRow(rows); ok {
+		if r.Kind == RowGroup {
+			return m.foldGroup(rows, !m.expanded[r.App.GroupID])
+		}
+		if r.HasChildren {
+			id := processID(r.Child)
+			m.collapsed[id] = !m.collapsed[id]
+		}
 	}
 	return m
 }
 
 // foldGroup sets the expanded state of the highlighted multi-process group.
 func (m Model) foldGroup(rows []VisibleRow, open bool) Model {
-	if r, ok := m.currentRow(rows); ok && r.Kind == RowGroup && r.App.ProcCount > 1 {
-		m.expanded[r.App.GroupID] = open
+	if r, ok := m.currentRow(rows); ok {
+		switch r.Kind {
+		case RowGroup:
+			if groupExpandable(r.App) {
+				m.expanded[r.App.GroupID] = open
+			}
+		case RowChild:
+			if r.HasChildren {
+				m.collapsed[processID(r.Child)] = !open
+			}
+		}
 	}
 	return m
 }
@@ -374,13 +390,7 @@ func (m Model) collapseRow(rows []VisibleRow) Model {
 	case RowGroup:
 		m.expanded[r.App.GroupID] = false
 	case RowChild:
-		m.expanded[r.App.GroupID] = false
-		for j := m.cursor - 1; j >= 0; j-- {
-			if rows[j].Kind == RowGroup {
-				m.cursor = j
-				break
-			}
-		}
+		return m.collapseProcessRow(r, rows)
 	}
 	return m
 }
@@ -450,11 +460,15 @@ const (
 // For a [RowGroup], App holds the aggregated stats.
 // For a [RowChild], Child holds the individual process detail.
 type VisibleRow struct {
-	Kind     RowKind              // group header or expanded child
-	App      collector.AppStat    // parent group (populated for both kinds)
-	AppIdx   int                  // index into the sorted apps slice
-	Child    collector.ProcDetail // individual process (only meaningful for RowChild)
-	ChildIdx int                  // index into App.Children (only meaningful for RowChild)
+	Kind         RowKind              // group header or expanded child
+	App          collector.AppStat    // parent group (populated for both kinds)
+	AppIdx       int                  // index into the sorted apps slice
+	Child        collector.ProcDetail // individual process (only meaningful for RowChild)
+	ChildIdx     int                  // index into App.Children (only meaningful for RowChild)
+	Depth        int                  // group = 0, immediate children = 1
+	TreePrefix   string               // ancestor guides and branch connector
+	HasChildren  bool                 // this process owns a visible subtree
+	BranchClosed bool                 // this process's descendants are folded
 }
 
 // visibleRows returns the flattened list of rows including expanded children.
@@ -463,12 +477,7 @@ func (m Model) visibleRows(apps []collector.AppStat) []VisibleRow {
 	for i, app := range apps {
 		rows = append(rows, VisibleRow{Kind: RowGroup, App: app, AppIdx: i})
 		if m.expanded[app.GroupID] {
-			for j, child := range m.sortedChildren(app) {
-				rows = append(rows, VisibleRow{
-					Kind: RowChild, App: app, AppIdx: i,
-					Child: child, ChildIdx: j,
-				})
-			}
+			rows = append(rows, m.processRows(app, i)...)
 		}
 	}
 	return rows

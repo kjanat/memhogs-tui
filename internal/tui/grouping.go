@@ -47,14 +47,23 @@ func findGroup(apps []collector.AppStat, id collector.GroupID) (collector.AppSta
 
 func (m Model) pruneExpanded() {
 	active := make(map[collector.GroupID]bool)
+	processes := make(map[collector.ProcessIdentity]bool)
 	if m.snap != nil {
 		for _, app := range m.snap.Apps {
 			active[app.GroupID] = true
+			for _, child := range app.Children {
+				processes[processID(child)] = true
+			}
 		}
 	}
 	for id := range m.expanded {
 		if !active[id] {
 			delete(m.expanded, id)
+		}
+	}
+	for id := range m.collapsed {
+		if !processes[id] {
+			delete(m.collapsed, id)
 		}
 	}
 }
