@@ -80,8 +80,8 @@ func (m Model) View() tea.View {
 }
 
 // tableFixedW is the non-name, non-bar column budget:
-// prefix(2) + rss(8) + swap(8) + procs/PID(10) + pct(7) + gap(1).
-const tableFixedW = 2 + 8 + 8 + 10 + 7 + 1
+// prefix(2) + rss(8) + swap(8) + procs/PID(10) + mem%(7) + cpu%(8) + gap(1).
+const tableFixedW = 2 + 8 + 8 + 10 + 7 + 8 + 1
 
 func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 	nameW, barW, maxRSS := tableLayout(rows, w)
@@ -90,7 +90,7 @@ func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 	b.WriteString(titleStyle.Render(m.tableTitle()))
 	b.WriteByte('\n')
 
-	hdr := fmt.Sprintf("  %-*s %7s %7s %9s %6s", nameW, "NAME / ROLE", "RSS", strings.ToUpper(m.secondaryLabel()), "PROCS/PID", "MEM%")
+	hdr := fmt.Sprintf("  %-*s %7s %7s %9s %6s %7s", nameW, "NAME / ROLE", "RSS", strings.ToUpper(m.secondaryLabel()), "PROCS/PID", "MEM%", "CPU%")
 	b.WriteString(headerStyle.Render(hdr))
 	b.WriteByte('\n')
 	b.WriteString(mutedStyle.Render(strings.Repeat("─", w)))
@@ -172,10 +172,10 @@ func (m Model) renderGroupRow(a collector.AppStat, nameW, barW int, maxRSS int64
 		}
 	}
 
-	row := fmt.Sprintf("%s%s %4dMiB %7s %9d %5.1f%%",
+	row := fmt.Sprintf("%s%s %4dMiB %7s %9d %5.1f%% %7s",
 		pfx, name,
 		a.RSSKB/1024, m.appSecondaryText(a),
-		a.ProcCount, a.MemPct)
+		a.ProcCount, a.MemPct, cpuText(a.CPUPct, a.CPUKnown))
 
 	if barW > 0 && maxRSS > 0 {
 		bLen := int(float64(a.RSSKB) / float64(maxRSS) * float64(barW))
@@ -199,9 +199,9 @@ func (m Model) renderChildRow(app string, child collector.ProcDetail, nameW int,
 	if total := m.snap.System.MemTotalKB; total > 0 {
 		memPct = float64(child.RSSKB) / float64(total) * 100
 	}
-	row := fmt.Sprintf("↳ %s %4dMiB %7s %9d %5.1f%%",
+	row := fmt.Sprintf("↳ %s %4dMiB %7s %9d %5.1f%% %7s",
 		fitText(processSummary(app, child), nameW), child.RSSKB/1024,
-		m.childSecondaryText(child), child.PID, memPct)
+		m.childSecondaryText(child), child.PID, memPct, cpuText(child.CPUPct, child.CPUKnown))
 	if selected {
 		return selectedStyle.Render(row)
 	}
@@ -242,6 +242,7 @@ func (m Model) viewDetail(a collector.AppStat, width int) string {
 		kvRow(m.secondaryLabel(), m.appSecondaryText(a), width),
 		kvRow("Procs", fmt.Sprintf("%d", a.ProcCount), width),
 		kvRow("Mem%", fmt.Sprintf("%.1f%%", a.MemPct), width),
+		kvRow("CPU%", cpuText(a.CPUPct, a.CPUKnown), width),
 	}
 
 	// Always reserve delta rows to prevent layout jitter
@@ -274,12 +275,13 @@ func (m Model) viewDetailChild(name string, c collector.ProcDetail, width int) s
 	// line. Truncate to a single line — wrapping a long cmdline would jitter
 	// the layout as the cursor moves between rows.
 
-	rows := make([]string, 0, 6)
+	rows := make([]string, 0, 7)
 	rows = append(rows,
 		titleStyle.Width(width).Render(fmt.Sprintf("▸ %s [%d]", displayText(name), c.PID)),
 		kvRow("RSS", fmt.Sprintf("%d MiB", c.RSSKB/1024), width),
 		kvRow(m.secondaryLabel(), m.childSecondaryText(c), width),
 		kvRow("Mem%", fmt.Sprintf("%.1f%%", memPct), width),
+		kvRow("CPU%", cpuText(c.CPUPct, c.CPUKnown), width),
 		sectionStyle.Width(width).Render("c: full command / directory"),
 		dimStyle.Width(width).Render(fitText(processSummary(name, c), width)),
 	)

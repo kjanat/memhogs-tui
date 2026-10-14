@@ -29,22 +29,56 @@ type AppStat struct {
 	CommitKnown bool         // true only when commit is available for every child
 	ProcCount   int          // number of processes in this group
 	MemPct      float64      // RSS as a percentage of total physical RAM
+	CPUPct      float64      // interval CPU usage; 100% is one logical CPU
+	CPUKnown    bool         // true only when CPU usage is available for every child
 	Children    []ProcDetail // individual processes, sorted by RSS descending
 }
 
 // ProcDetail holds per-PID data for an individual process within an [AppStat] group.
 type ProcDetail struct {
-	PID         int          // OS process ID
-	StartTime   uint64       // opaque OS creation time; PID plus StartTime identifies a process
-	Cmdline     string       // full command line for display when the group is expanded
-	Cwd         string       // working directory, when readable
-	Terminal    string       // controlling input terminal, when readable
-	Session     *SessionInfo // verified Claude session metadata; nil if unavailable
-	RSSKB       int64        // resident set size in KiB
-	SwapKB      int64        // swap usage in KiB
-	SwapKnown   bool         // distinguishes unavailable swap from zero
-	CommitKB    int64        // Windows process commit charge in KiB
-	CommitKnown bool         // distinguishes unavailable commit from zero
+	PID         int             // OS process ID
+	ParentPID   int             // observed parent PID; zero if unavailable
+	StartTime   uint64          // opaque OS creation time; PID plus StartTime identifies a process
+	Executable  string          // executable path, when readable
+	Args        []string        // original argv, when available; never execute this display metadata
+	Cmdline     string          // full command line for display when the group is expanded
+	Cwd         string          // working directory, when readable
+	Terminal    string          // controlling input terminal, when readable
+	Session     *SessionInfo    // verified Claude session metadata; nil if unavailable
+	Context     *ProcessContext // common application, workspace, and ancestry context
+	RSSKB       int64           // resident set size in KiB
+	SwapKB      int64           // swap usage in KiB
+	SwapKnown   bool            // distinguishes unavailable swap from zero
+	CommitKB    int64           // Windows process commit charge in KiB
+	CommitKnown bool            // distinguishes unavailable commit from zero
+	CPUTime     float64         // cumulative user + kernel CPU time in seconds, excluding child processes
+	CPUAt       time.Time       // counter observation time; zero when unavailable
+	CPUPct      float64         // interval CPU usage; 100% is one logical CPU
+	CPUKnown    bool            // true after two valid observations of this process lifetime
+}
+
+// ProcessContext describes observed ownership and workspace clues. Sources are
+// retained so a current directory or open repository is never called a spawn directory.
+type ProcessContext struct {
+	Application       string            // concrete application inferred from executable/package arguments
+	ApplicationPID    int               // process providing that application identity
+	ApplicationSource string            // evidence used for the label
+	ProjectDir        string            // observed workspace; may differ from Cwd
+	ProjectSource     string            // cwd, application ancestor, or repository socket
+	Origin            string            // nearest distinct application or launcher in the parent chain
+	OriginPID         int               // PID of that ancestor
+	Chromium          bool              // Chromium role flags observed in this executable's process family
+	Ancestors         []ProcessAncestor // immediate parent first; bounded and cycle checked
+	Resources         []string          // relevant open resource paths; contents are never read
+}
+
+// ProcessAncestor records a verified process identity from the same scan.
+type ProcessAncestor struct {
+	PID        int
+	StartTime  uint64
+	Name       string
+	Executable string
+	Cwd        string
 }
 
 // SessionInfo identifies an active Claude conversation without reading its transcript.

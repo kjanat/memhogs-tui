@@ -86,7 +86,7 @@ func TestScrollingAndAllChildren(t *testing.T) {
 	}
 	require(t, m.cursor == 40 && m.offset == 35, "cursor=%d offset=%d", m.cursor, m.offset)
 	table := m.viewTable(m.visibleRows(m.sortedApps()), 80, 9)
-	require(t, strings.Contains(table, "--worker 40") && !strings.Contains(table, "--worker 1 "), "selected process not visible:\n%s", table)
+	require(t, strings.Contains(table, "       40") && !strings.Contains(table, "        1 "), "selected process not visible:\n%s", table)
 	m, _ = updateModel(m, tea.WindowSizeMsg{Width: 80, Height: 6})
 	if m.offset != 39 {
 		t.Fatalf("resize failed: offset=%d", m.offset)

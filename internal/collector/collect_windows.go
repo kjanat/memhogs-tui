@@ -103,23 +103,17 @@ func collectApps(totalKB int64) []AppStat {
 
 		exe := windows.UTF16ToString(pe.ExeFile[:])
 		name := groupName(exe)
-		rss, commitKB, start, known := procMem(pid)
+		process := procMem(pid)
+		process.PID, process.Cmdline = int(pid), exe
 
 		g, ok := groups[name]
 		if !ok {
 			g = &appGroup{}
 			groups[name] = g
 		}
-		g.rssKB += rss
+		g.rssKB += process.RSSKB
 		g.count++
-		g.children = append(g.children, ProcDetail{
-			PID:         int(pid),
-			Cmdline:     exe,
-			RSSKB:       rss,
-			CommitKB:    commitKB,
-			CommitKnown: known,
-			StartTime:   start,
-		})
+		g.children = append(g.children, process)
 
 		if windows.Process32Next(snap, &pe) != nil {
 			break
@@ -139,13 +133,13 @@ func groupName(exe string) string {
 }
 
 // procMem reads working set, commit charge, and creation time for a PID.
-func procMem(pid uint32) (rssKB, commitKB int64, start uint64, known bool) {
+func procMem(pid uint32) ProcDetail {
 	h, err := windows.OpenProcess(
 		windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_VM_READ,
 		false, pid,
 	)
 	if err != nil {
-		return 0, 0, 0, false
+		return ProcDetail{}
 	}
 	defer windows.CloseHandle(h)
 
@@ -157,10 +151,16 @@ func procMem(pid uint32) (rssKB, commitKB int64, start uint64, known bool) {
 		uintptr(pmc.CB),
 	)
 	if r == 0 {
-		return 0, 0, 0, false
+		return ProcDetail{}
 	}
-	start, err = processStartTimeHandle(h)
-	return int64(pmc.WorkingSetSize / 1024), int64(pmc.PagefileUsage / 1024), start, err == nil
+	p := ProcDetail{RSSKB: int64(pmc.WorkingSetSize / 1024), CommitKB: int64(pmc.PagefileUsage / 1024), CommitKnown: true}
+	var creation, exit, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(h, &creation, &exit, &kernel, &user); err == nil {
+		p.CPUAt = time.Now()
+		p.StartTime = filetimeValue(creation)
+		p.CPUTime = (float64(filetimeValue(kernel)) + float64(filetimeValue(user))) / 1e7
+	}
+	return p
 }
 
 // ProcessStartTime returns the Windows process creation time.
@@ -178,5 +178,9 @@ func processStartTimeHandle(h windows.Handle) (uint64, error) {
 	if err := windows.GetProcessTimes(h, &creation, &exit, &kernel, &user); err != nil {
 		return 0, err
 	}
-	return uint64(creation.HighDateTime)<<32 | uint64(creation.LowDateTime), nil
+	return filetimeValue(creation), nil
+}
+
+func filetimeValue(value windows.Filetime) uint64 {
+	return uint64(value.HighDateTime)<<32 | uint64(value.LowDateTime)
 }

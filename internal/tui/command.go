@@ -26,6 +26,7 @@ func (m Model) openCommand() Model {
 			lines = append(lines, "Session: "+displayText(session.ID), "Name: "+displayText(session.Name),
 				"Spawn dir (session): "+displayText(session.ProjectDir), "Entrypoint: "+displayText(session.Entrypoint))
 		}
+		lines = append(lines, processContextLines(child)...)
 		directoryLabel := "Directory: "
 		if row.App.Name == "claude" {
 			directoryLabel = "Current dir: "
@@ -45,4 +46,23 @@ func (m Model) viewCommand() string {
 	header := titleStyle.Render(" " + m.commandTitle + " · full command")
 	footer := dimStyle.Render(" ↑↓ / PgUp PgDn scroll · c / Esc close")
 	return lipgloss.JoinVertical(lipgloss.Left, header, "", m.command.View(), footer)
+}
+
+func processContextLines(p collector.ProcDetail) []string {
+	lines := []string{fmt.Sprintf("Parent PID: %d", p.ParentPID), "Executable: " + displayText(p.Executable)}
+	if ctx := p.Context; ctx != nil {
+		lines = append(lines, fmt.Sprintf("Application: %s [PID %d]", displayText(ctx.Application), ctx.ApplicationPID),
+			"Application source: "+displayText(ctx.ApplicationSource),
+			"Context directory: "+displayText(ctx.ProjectDir), "Directory source: "+displayText(ctx.ProjectSource))
+		if ctx.Origin != "" {
+			lines = append(lines, fmt.Sprintf("Launched via: %s [PID %d]", displayText(ctx.Origin), ctx.OriginPID))
+		}
+		for _, a := range ctx.Ancestors {
+			lines = append(lines, fmt.Sprintf("Ancestor: %s [PID %d] · %s", displayText(a.Name), a.PID, displayText(a.Cwd)))
+		}
+		for _, resource := range ctx.Resources {
+			lines = append(lines, "Open resource: "+displayText(resource))
+		}
+	}
+	return lines
 }

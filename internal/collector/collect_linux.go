@@ -71,46 +71,51 @@ func readMemInfo() (SystemInfo, error) {
 	return info, nil
 }
 
+type collectedProcess struct {
+	name   string
+	detail ProcDetail
+}
+
 func collectApps(totalKB int64) []AppStat {
-	entries, err := os.ReadDir("/proc")
+	processes := scanProcesses("/proc")
+	enrichProcessContexts(processes, "/proc")
+	groups := make(map[string]*appGroup)
+	for _, process := range processes {
+		group, ok := groups[process.name]
+		if !ok {
+			group = &appGroup{}
+			groups[process.name] = group
+		}
+		group.rssKB += process.detail.RSSKB
+		group.swapKB += process.detail.SwapKB
+		group.count++
+		group.children = append(group.children, process.detail)
+	}
+	return buildAppStats(groups, totalKB)
+}
+
+func scanProcesses(root string) map[int]*collectedProcess {
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil
 	}
-
-	groups := make(map[string]*appGroup)
-	for _, e := range entries {
-		if !e.IsDir() {
+	processes := make(map[int]*collectedProcess)
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 || !entry.IsDir() {
 			continue
 		}
-		pid := e.Name()
-		if len(pid) == 0 || pid[0] < '0' || pid[0] > '9' {
-			continue
-		}
-
-		dir := filepath.Join("/proc", pid)
-		name, process, ok := readProcess(dir)
+		name, process, ok := readProcess(filepath.Join(root, entry.Name()))
 		if !ok {
 			continue
 		}
-
-		g, ok := groups[name]
-		if !ok {
-			g = &appGroup{}
-			groups[name] = g
-		}
-		g.rssKB += process.RSSKB
-		g.swapKB += process.SwapKB
-		g.count++
-
-		pidNum, _ := strconv.Atoi(pid)
-		process.PID = pidNum
+		process.PID = pid
 		if name == "claude" {
-			process.Session = claudeSession(pidNum, process.StartTime)
+			process.Session = claudeSession(pid, process.StartTime)
 		}
-		g.children = append(g.children, process)
+		processes[pid] = &collectedProcess{name: name, detail: process}
 	}
-
-	return buildAppStats(groups, totalKB)
+	return processes
 }
 
 // procName returns the display name for a process.
@@ -166,7 +171,11 @@ func cmdlineName(dir string) string {
 // cmdlineDisplay returns the full command for display when a group is expanded.
 // Strips path from argv[0], squashes home dir to ~.
 func cmdlineDisplay(dir string) string {
-	args := splitCmdline(dir)
+	return formatCmdline(splitCmdline(dir))
+}
+
+func formatCmdline(rawArgs []string) string {
+	args := slices.Clone(rawArgs)
 	if len(args) == 0 {
 		return ""
 	}
@@ -333,29 +342,41 @@ func ProcessStartTime(pid int) (uint64, error) {
 }
 
 func readStartTime(dir string) (uint64, error) {
+	start, _, err := readProcessIdentity(dir)
+	return start, err
+}
+
+func readProcessIdentity(dir string) (start uint64, parent int, err error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "stat"))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return parseStartTime(string(raw))
+	return parseProcessIdentity(string(raw))
 }
 
 func parseStartTime(stat string) (uint64, error) {
+	start, _, err := parseProcessIdentity(stat)
+	return start, err
+}
+
+func parseProcessIdentity(stat string) (start uint64, parent int, err error) {
 	// comm (field 2) can contain spaces and parentheses; the final ')' ends it.
 	_, rest, ok := strings.CutLast(stat, ")")
-	if !ok {
-		return 0, fmt.Errorf("invalid process stat")
-	}
 	fields := strings.Fields(rest)
-	if len(fields) <= 19 {
-		return 0, fmt.Errorf("invalid process stat")
+	if !ok || len(fields) <= 19 {
+		return 0, 0, fmt.Errorf("invalid process stat")
 	}
-	return strconv.ParseUint(fields[19], 10, 64) // field 22, after pid and comm
+	parent, err = strconv.Atoi(fields[1]) // field 4
+	if err != nil {
+		return 0, 0, err
+	}
+	start, err = strconv.ParseUint(fields[19], 10, 64) // field 22
+	return start, parent, err
 }
 
 // readProcess verifies that metadata and counters belong to one process lifetime.
 func readProcess(dir string) (string, ProcDetail, bool) {
-	start, err := readStartTime(dir)
+	start, parent, err := readProcessIdentity(dir)
 	if err != nil {
 		return "", ProcDetail{}, false
 	}
@@ -368,12 +389,20 @@ func readProcess(dir string) (string, ProcDetail, bool) {
 		return "", ProcDetail{}, false
 	} // zombies and tasks with neither resident nor swapped memory
 	cwd, terminal := processContext(dir)
-	cmdline := cmdlineDisplay(dir)
-	end, err := readStartTime(dir)
-	if err != nil || start != end {
+	args := splitCmdline(dir)
+	cmdline := formatCmdline(args)
+	executable, _ := os.Readlink(filepath.Join(dir, "exe"))
+	raw, err := os.ReadFile(filepath.Join(dir, "stat"))
+	at := time.Now()
+	end, identityErr := parseStartTime(string(raw))
+	if err != nil || identityErr != nil || start != end {
 		return "", ProcDetail{}, false
 	}
-	return name, ProcDetail{StartTime: start, Cmdline: cmdline, Cwd: cwd, Terminal: terminal, RSSKB: rss, SwapKB: swap, SwapKnown: known}, true
+	p := ProcDetail{StartTime: start, ParentPID: parent, Executable: executable, Args: args, Cmdline: cmdline, Cwd: cwd, Terminal: terminal, RSSKB: rss, SwapKB: swap, SwapKnown: known}
+	if seconds, ok := parseCPUTime(string(raw), clockTicks()); ok {
+		p.CPUTime, p.CPUAt = seconds, at
+	}
+	return name, p, true
 }
 
 func processContext(dir string) (cwd, terminal string) {

@@ -157,6 +157,7 @@ func readMemInfo() (SystemInfo, error) {
 
 func collectApps(totalKB int64) []AppStat {
 	raw, err := unix.SysctlRaw("kern.proc", kernProcAll, 0, sizeofKinfoProc, 1024)
+	cpuAt := time.Now()
 	if err != nil {
 		return nil
 	}
@@ -190,12 +191,17 @@ func collectApps(totalKB int64) []AppStat {
 		}
 		g.rssKB += rssKB
 		g.count++
-		g.children = append(g.children, ProcDetail{
+		process := ProcDetail{
 			PID:       pid,
 			StartTime: kp.UstartSec*1000000 + uint64(kp.UstartUsec),
 			Cmdline:   comm, // OpenBSD: kern.proc.args is restricted, use comm
 			RSSKB:     rssKB,
-		})
+		}
+		if kp.Uvalid != 0 {
+			process.CPUTime = float64(kp.UutimeSec) + float64(kp.UstimeSec) + (float64(kp.UutimeUsec)+float64(kp.UstimeUsec))/1e6
+			process.CPUAt = cpuAt
+		}
+		g.children = append(g.children, process)
 	}
 
 	return buildAppStats(groups, totalKB)

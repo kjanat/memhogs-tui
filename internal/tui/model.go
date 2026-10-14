@@ -32,12 +32,13 @@ const (
 	SortSwap                  // swap usage
 	SortProcs                 // process count
 	SortName                  // alphabetical
+	SortCPU                   // interval CPU usage
 	sortModeCount
 )
 
 // String returns the short label shown in the table header.
 func (s SortMode) String() string {
-	return [...]string{"RSS", "Swap", "Procs", "Name"}[s]
+	return [...]string{"RSS", "Swap", "Procs", "Name", "CPU"}[s]
 }
 
 // Config holds startup parameters for [New].
@@ -197,7 +198,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) applySnapshot(s *collector.Snapshot) Model {
 	row, selected := m.currentRow(m.visibleRows(m.sortedApps()))
 	m.prevSnap = m.snap
-	m.snap = s
+	m.snap = collector.WithCPU(s, m.prevSnap)
 	m.err = nil
 	m = m.restoreSelection(row, selected)
 
@@ -401,6 +402,10 @@ func (m Model) sortedApps() []collector.AppStat {
 		slices.SortFunc(apps, func(a, b collector.AppStat) int {
 			return cmp.Compare(a.Name, b.Name)
 		})
+	case SortCPU:
+		slices.SortFunc(apps, func(a, b collector.AppStat) int {
+			return cmp.Or(compareCPU(a.CPUPct, a.CPUKnown, b.CPUPct, b.CPUKnown), cmp.Compare(a.Name, b.Name))
+		})
 	case sortModeCount: // sentinel, never an active mode; leave order as-is
 	}
 
@@ -556,7 +561,7 @@ func matchesFilter(a collector.AppStat, query string) bool {
 		return true
 	}
 	for _, child := range a.Children {
-		if strings.Contains(strings.ToLower(child.Cmdline), query) || strings.Contains(strings.ToLower(child.Cwd), query) || sessionMatches(child.Session, query) {
+		if strings.Contains(strings.ToLower(child.Cmdline), query) || strings.Contains(strings.ToLower(child.Cwd), query) || sessionMatches(child.Session, query) || contextMatches(child.Context, query) || strings.Contains(strings.ToLower(child.Executable), query) {
 			return true
 		}
 	}
@@ -570,4 +575,11 @@ func sessionMatches(session *collector.SessionInfo, query string) bool {
 	return strings.Contains(strings.ToLower(session.Name), query) ||
 		strings.Contains(strings.ToLower(session.ID), query) ||
 		strings.Contains(strings.ToLower(session.ProjectDir), query)
+}
+
+func contextMatches(ctx *collector.ProcessContext, query string) bool {
+	if ctx == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(ctx.Application), query) || strings.Contains(strings.ToLower(ctx.ProjectDir), query) || strings.Contains(strings.ToLower(ctx.Origin), query)
 }

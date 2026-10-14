@@ -177,6 +177,7 @@ func readSwapInfo() (totalKB, usedKB int64, known bool) {
 
 func collectApps(totalKB int64) []AppStat {
 	raw, err := unix.SysctlRaw("kern.proc.all")
+	cpuAt := time.Now()
 	if err != nil {
 		return nil
 	}
@@ -225,6 +226,8 @@ func collectApps(totalKB int64) []AppStat {
 			Cmdline:   cmdlineDisplay(pid),
 			RSSKB:     rssKB,
 			SwapKB:    swapKB,
+			CPUTime:   float64(kp.Runtime) / 1e6,
+			CPUAt:     cpuAt,
 		})
 	}
 

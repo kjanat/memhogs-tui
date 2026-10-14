@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -19,9 +20,19 @@ import (
 
 // proc_pidinfo constants for SYS_PROC_INFO syscall.
 const (
-	procInfoCallPidInfo = 1 // PROC_INFO_CALL_PIDINFO
+	procInfoCallPidInfo = 2 // PROC_INFO_CALL_PIDINFO
 	procPidTaskInfo     = 4 // PROC_PIDTASKINFO flavor
 )
+
+// proc_taskinfo times use Mach absolute-time units, including on Apple Silicon.
+// The kernel exposes that timebase's frequency; it is not the CPU clock speed.
+var taskTimeFrequency = sync.OnceValue(func() uint64 {
+	frequency, err := unix.SysctlUint64("hw.tbfrequency")
+	if err != nil {
+		return 0
+	}
+	return frequency
+})
 
 // procTaskInfo mirrors struct proc_taskinfo from <sys/proc_info.h>.
 // Used with SYS_PROC_INFO + PROC_PIDTASKINFO to get accurate RSS.
@@ -122,7 +133,14 @@ func collectApps(totalKB int64) []AppStat {
 			continue
 		}
 
-		rss, swap := procMem(int32(pid))
+		process := procMem(int32(pid))
+		process.PID = pid
+		process.StartTime = uint64(kp.Proc.P_starttime.Sec)*1000000 + uint64(kp.Proc.P_starttime.Usec)
+		if !process.CPUAt.IsZero() {
+			if start, err := ProcessStartTime(pid); err != nil || start != process.StartTime {
+				continue // PID changed between enumeration and counter observation
+			}
+		}
 		name := procName(kp, pid)
 		if name == "" {
 			continue
@@ -133,24 +151,18 @@ func collectApps(totalKB int64) []AppStat {
 			g = &appGroup{}
 			groups[name] = g
 		}
-		g.rssKB += rss
-		g.swapKB += swap
+		g.rssKB += process.RSSKB
 		g.count++
-		g.children = append(g.children, ProcDetail{
-			PID:       pid,
-			StartTime: uint64(kp.Proc.P_starttime.Sec)*1000000 + uint64(kp.Proc.P_starttime.Usec),
-			Cmdline:   cmdlineDisplay(pid),
-			RSSKB:     rss,
-			SwapKB:    swap,
-		})
+		process.Cmdline = cmdlineDisplay(pid)
+		g.children = append(g.children, process)
 	}
 
 	return buildAppStats(groups, totalKB)
 }
 
-// procMem reads RSS and swap via SYS_PROC_INFO + PROC_PIDTASKINFO.
+// procMem reads RSS and CPU counters via SYS_PROC_INFO + PROC_PIDTASKINFO.
 // This avoids the int16 truncation in KinfoProc.Eproc.Xrssize.
-func procMem(pid int32) (rssKB, swapKB int64) {
+func procMem(pid int32) ProcDetail {
 	var ti procTaskInfo
 	size := int32(unsafe.Sizeof(ti))
 	r, _, e := unix.Syscall6(
@@ -162,10 +174,16 @@ func procMem(pid int32) (rssKB, swapKB int64) {
 		uintptr(unsafe.Pointer(&ti)),
 		uintptr(size),
 	)
+	at := time.Now()
 	if e != 0 || int32(r) < size {
-		return 0, 0
+		return ProcDetail{}
 	}
-	return int64(ti.ResidentSize / 1024), 0 // macOS has no per-process swap metric
+	p := ProcDetail{RSSKB: int64(ti.ResidentSize / 1024)} // no per-process swap metric
+	if frequency := taskTimeFrequency(); frequency != 0 {
+		p.CPUTime = (float64(ti.TotalUser) + float64(ti.TotalSystem)) / float64(frequency)
+		p.CPUAt = at
+	}
+	return p
 }
 
 // procName returns the display name for a process.

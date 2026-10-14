@@ -13,7 +13,7 @@ import (
 
 func TestProcessSummaries(t *testing.T) {
 	for _, tt := range []struct{ name, app, command, want string }{
-		{"browser with renamed argv0", "chrome", "GitHub9061 --change-stack-guard-on-fork=enable --ozone-platform=wayland", "browser (no --type)"},
+		{"browser with renamed argv0", "chrome", "GitHub9061 --change-stack-guard-on-fork=enable --ozone-platform=wayland", "GitHub9061"},
 		{"renderer", "chrome", "GitHub9061 --ozone-platform=wayland --type=renderer --lang=en-US", "renderer"},
 		{"extension", "chrome", "GitHub9061 --type=renderer --extension-process", "extension renderer"},
 		{"gpu", "chrome", "GitHub9061 --type=gpu-process --gpu-preferences=AAA", "GPU process"},
@@ -23,7 +23,7 @@ func TestProcessSummaries(t *testing.T) {
 		{"other utility", "chrome", "GitHub9061 --type=utility --utility-sub-type=video_capture.mojom.VideoCaptureService", "utility: VideoCaptureService"},
 		{"plain utility", "chrome", "GitHub9061 --type=utility", "utility"},
 		{"zygote", "chrome", "GitHub9061 --type=zygote", "zygote"},
-		{"generic app", "node", "node /projects/worker.js --port 9000", "node /projects/worker.js --port 9000"},
+		{"generic app", "node", "node /projects/worker.js --port 9000", "/projects/worker.js"},
 		{"empty command", "worker", "", "worker"},
 		{"not a browser", "chrome-helper-script", "python run.py", "python run.py"},
 	} {
@@ -158,11 +158,62 @@ func TestClaudeSessionSummaryAndInspector(t *testing.T) {
 func TestClaudeSessionFallbackAndSafeNames(t *testing.T) {
 	p := collector.ProcDetail{Cmdline: "claude secret-startup-prompt", Cwd: "~/projects/dprint/dprint"}
 	summary := processSummary("claude", p)
-	require(t, summary == "cwd: dprint/dprint · session unavailable", "unknown session should show current directory: %s", summary)
+	require(t, summary == "dprint/dprint · session unavailable", "unknown session should show current directory: %s", summary)
 	p.Session = &collector.SessionInfo{ID: "c66ae174-d32f-4214-bb47-e3b9fa4b641e", ProjectDir: "~/projects/dprint/dprint"}
 	summary = processSummary("claude", p)
 	require(t, strings.Contains(summary, "c66ae174") && strings.Contains(summary, "dprint/dprint"), "unnamed session lost identity: %s", summary)
 	p.Session.Name = "name\x1b[2J\nunsafe"
 	summary = processSummary("claude", p)
 	require(t, !strings.ContainsAny(summary, "\x1b\n"), "session name injected terminal controls")
+}
+
+func TestCommonContextAppliesWithoutApplicationSpecificRules(t *testing.T) {
+	for _, tt := range []struct{ app, command, directory, origin, application, expectedRole string }{
+		{"codex", "codex -c features.code_mode_host=true app-server --listen stdio://", "~", "ChatGPT", "codex", "app-server"},
+		{"codex", "codex app-server", "~/projects/dprint/dprint", "zed-editor", "codex", "app-server"},
+		{"gopls", "gopls", "~/projects/actionlint", "claude (actionlint nix)", "gopls", "gopls"},
+		{"gopls", "gopls ** telemetry **", "~/projects/shellcheck-rs", "claude", "gopls", "telemetry"},
+		{"git", "git fsmonitor--daemon run --detach --ipc-threads=8", "/projects/biome", "", "git", "fsmonitor--daemon run"},
+		{"electron", "electron --type=renderer", "~", "", "ChatGPT", "renderer"},
+		{"electron", "electron --type=renderer", "~", "", "bitwarden", "renderer"},
+		{"custom-daemon", "custom-daemon serve --verbose", "/projects/unlisted-project", "custom-editor", "custom-daemon", "serve"},
+	} {
+		t.Run(tt.app+tt.directory+tt.application+tt.expectedRole, func(t *testing.T) {
+			p := collector.ProcDetail{PID: 123, Cmdline: tt.command, Cwd: "~", Context: &collector.ProcessContext{Application: tt.application, ProjectDir: tt.directory, ProjectSource: "cwd", Origin: tt.origin, Chromium: tt.app == "electron"}}
+			got := processSummary(tt.app, p)
+			for _, value := range []string{projectLabel(tt.directory), tt.expectedRole} {
+				require(t, strings.Contains(got, value), "missing common context %q: %s", value, got)
+			}
+			if tt.origin != "" {
+				require(t, strings.Contains(got, "via "+tt.origin), "missing process owner: %s", got)
+			}
+			if tt.application != tt.app {
+				require(t, strings.Contains(got, tt.application), "shared runtime lost concrete app: %s", got)
+			}
+		})
+	}
+}
+
+func TestObservedChromiumFamilyHandlesUnlistedBrowsers(t *testing.T) {
+	p := collector.ProcDetail{PID: 123, Args: []string{"/tmp/.mount_helium/opt/helium/helium", "http://localhost"}, Cwd: "~", Context: &collector.ProcessContext{Application: "helium", ApplicationPID: 123, ProjectDir: "~", Chromium: true}}
+	got := processSummary("helium", p)
+	require(t, got == "~ · main process", "unlisted browser main process lost role: %s", got)
+}
+
+func TestContextSearchAndInspectorExposeEvidence(t *testing.T) {
+	app := testApp("electron", 4096, 123)
+	p := &app.Children[0]
+	p.Cwd = "/proc/100/fdinfo"
+	p.ParentPID = 110
+	p.Executable = "/usr/lib/electron42/electron"
+	p.Context = &collector.ProcessContext{Application: "ChatGPT", ApplicationPID: 100, ApplicationSource: "package argument", ProjectDir: "~", ProjectSource: "application ancestor cwd", Origin: "launcher", Ancestors: []collector.ProcessAncestor{{PID: 110, Name: "electron", Cwd: "/proc/100/fdinfo"}, {PID: 100, Name: "electron", Cwd: "~"}}, Resources: []string{"/usr/lib/chatgpt/resources/app.asar"}}
+	m := testModel(app)
+	m.filter = "chatgpt"
+	require(t, len(m.sortedApps()) == 1, "filter missed inferred app name")
+	m.expanded["electron"] = true
+	m.cursor = 1
+	m, _ = updateModel(m, press('c'))
+	for _, value := range []string{"Parent PID: 110", "Executable: /usr/lib/electron42/electron", "Application: ChatGPT [PID 100]", "Directory source: application ancestor cwd", "Ancestor: electron [PID 100]", "Open resource: /usr/lib/chatgpt/resources/app.asar"} {
+		require(t, strings.Contains(m.commandText, value), "inspector missing evidence %q", value)
+	}
 }

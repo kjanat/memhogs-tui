@@ -5,6 +5,7 @@ package collector
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -87,8 +88,10 @@ func TestReadProcessFixture(t *testing.T) {
 		}
 	}
 	name, p, ok := readProcess(dir)
-	want := ProcDetail{StartTime: 100, Cmdline: "node /projects/myapp/server.js --worker", RSSKB: 4096, SwapKB: 512, SwapKnown: true}
-	if !ok || name != "node server.js" || p != want {
+	want := ProcDetail{Args: []string{"/usr/bin/node", "/projects/myapp/server.js", "--worker"}, StartTime: 100, Cmdline: "node /projects/myapp/server.js --worker", RSSKB: 4096, SwapKB: 512, SwapKnown: true}
+	requireCPU(t, !p.CPUAt.IsZero() && p.CPUTime == 0, "missing idle CPU observation")
+	want.CPUAt = p.CPUAt
+	if !ok || name != "node server.js" || !reflect.DeepEqual(p, want) {
 		t.Fatalf("bad fixture: %q %+v %v", name, p, ok)
 	}
 	if err := os.Remove(filepath.Join(dir, "stat")); err != nil {

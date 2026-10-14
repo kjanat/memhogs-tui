@@ -9,50 +9,119 @@ import (
 	"memhogs.kjanat.dev/internal/collector"
 )
 
-// processSummary replaces Chromium's repeated launch flags with the role they
-// explicitly report. It cannot identify tabs or sites absent from the command.
+// processSummary always combines common process context with a concise role.
+// Application metadata enriches the role without replacing workspace or ownership.
 func processSummary(app string, process collector.ProcDetail) string {
-	args := strings.Fields(displayText(process.Cmdline))
-	if app == "claude" {
-		return claudeSummary(process)
+	parts := processIdentity(app, process)
+	parts = append(parts, processRole(app, process))
+	if ctx := process.Context; ctx != nil && ctx.Origin != "" && !ctx.Chromium {
+		parts = append(parts, "via "+ctx.Origin)
 	}
+	if process.Terminal != "" {
+		parts = append(parts, process.Terminal)
+	}
+	return displayText(strings.Join(parts, " · "))
+}
+
+func processIdentity(app string, p collector.ProcDetail) []string {
+	var parts []string
+	directory := p.Cwd
+	if ctx := p.Context; ctx != nil {
+		if ctx.Application != "" && !strings.EqualFold(ctx.Application, app) {
+			parts = append(parts, ctx.Application)
+		}
+		if ctx.ProjectDir != "" {
+			directory = ctx.ProjectDir
+		}
+	}
+	if p.Session != nil && p.Session.ProjectDir != "" {
+		directory = p.Session.ProjectDir
+	}
+	if directory != "" {
+		parts = append(parts, projectLabel(directory))
+	}
+	return parts
+}
+
+func processRole(app string, p collector.ProcDetail) string {
+	if session := p.Session; session != nil {
+		return sessionLabel(session)
+	}
+	if app == "claude" {
+		return "session unavailable"
+	}
+	args := p.Arguments()
 	if role := chromiumRole(args); role != "" {
 		return role
 	}
-	if browserGroup(app) && commandFlag(args, "--type") == "" {
-		return "browser (no --type)"
+	if ctx := p.Context; ctx != nil && ctx.Chromium && ctx.ApplicationPID == p.PID {
+		return "main process"
 	}
-	if shellGroup(app) && len(args) <= 1 {
-		return shellSummary(process)
-	}
-	if len(args) == 0 {
-		return displayText(app)
-	}
-	return strings.Join(args, " ")
+	return compactCommand(app, args)
 }
 
-func claudeSummary(process collector.ProcDetail) string {
-	if session := process.Session; session != nil {
-		name := session.Name
-		id := session.ID
-		if len(id) > 8 {
-			id = id[:8]
-		}
-		if name == "" {
-			name = "session"
-		}
-		directory := "spawn dir unavailable"
-		if session.ProjectDir != "" {
-			directory = projectLabel(session.ProjectDir)
-		}
-		return directory + " · " + displayText(name) + " [" + displayText(id) + "]"
+func sessionLabel(session *collector.SessionInfo) string {
+	name := session.Name
+	if name == "" {
+		name = "session"
 	}
-	return "cwd: " + projectLabel(process.Cwd) + " · session unavailable"
+	id := session.ID
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	return name + " [" + id + "]"
+}
+
+func compactCommand(app string, args []string) string {
+	if len(args) == 0 {
+		return app
+	}
+	program := filepath.Base(args[0])
+	positional := commandPositionals(args[1:])
+	if len(positional) == 0 {
+		return program
+	}
+	if program == app {
+		return strings.Join(positional, " ")
+	}
+	return program + " " + strings.Join(positional, " ")
+}
+
+func commandPositionals(args []string) []string {
+	var positional []string
+	for i := 0; i < len(args) && len(positional) < 3; i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			if len(positional) > 0 {
+				break
+			}
+			if valueFlag(arg) {
+				i++
+				continue
+			}
+			if strings.Contains(arg, "=") {
+				continue
+			}
+			break
+		}
+		if strings.Contains(arg, "=") || arg == "**" {
+			continue
+		}
+		positional = append(positional, arg)
+	}
+	return positional
+}
+
+func valueFlag(flag string) bool {
+	return slices.Contains([]string{"-c", "--config", "--settings", "--name", "-n", "--model", "--effort", "--user-data-dir", "--class", "--app-path"}, flag)
 }
 
 func projectLabel(directory string) string {
 	if directory == "" {
 		return "directory unavailable"
+	}
+	if directory == "~" || directory == string(filepath.Separator) {
+		return directory
 	}
 	// Keep the parent for nested repositories such as dprint/dprint.
 	directory = filepath.Clean(directory)
@@ -97,21 +166,6 @@ func utilitySummary(subtype string) string {
 	}
 }
 
-func shellGroup(name string) bool {
-	return slices.Contains([]string{"zsh", "bash", "fish", "sh", "dash", "ksh"}, strings.ToLower(name))
-}
-
-func shellSummary(process collector.ProcDetail) string {
-	cwd := displayText(process.Cwd)
-	if cwd == "" {
-		cwd = "directory unavailable"
-	}
-	if process.Terminal != "" {
-		return displayText(process.Terminal) + " · " + cwd
-	}
-	return cwd
-}
-
 func commandFlag(args []string, name string) string {
 	for i, arg := range args {
 		if value, ok := strings.CutPrefix(arg, name+"="); ok {
@@ -122,14 +176,6 @@ func commandFlag(args []string, name string) string {
 		}
 	}
 	return ""
-}
-
-func browserGroup(name string) bool {
-	fields := strings.Fields(strings.ToLower(name))
-	if len(fields) == 0 {
-		return false
-	}
-	return slices.Contains([]string{"chrome", "chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "brave", "brave-browser", "msedge", "vivaldi", "opera"}, fields[0])
 }
 
 func (m Model) childSecondary(c collector.ProcDetail) (int64, bool) {
@@ -150,6 +196,8 @@ func (m Model) sortedChildren(app collector.AppStat) []collector.ProcDetail {
 			order = compareMemory(av, ak, bv, bk)
 		case SortName:
 			order = cmp.Compare(processSummary(app.Name, a), processSummary(app.Name, b))
+		case SortCPU:
+			order = compareCPU(a.CPUPct, a.CPUKnown, b.CPUPct, b.CPUKnown)
 		default: // RSS, process count, and the inactive sentinel use child RSS.
 		}
 		return cmp.Or(order, cmp.Compare(a.PID, b.PID))
@@ -163,6 +211,19 @@ func compareMemory(a int64, aKnown bool, b int64, bKnown bool) int {
 			return -1
 		}
 		return 1
+	}
+	return cmp.Compare(b, a)
+}
+
+func compareCPU(a float64, aKnown bool, b float64, bKnown bool) int {
+	if aKnown != bKnown {
+		if aKnown {
+			return -1
+		}
+		return 1
+	}
+	if !aKnown {
+		return 0
 	}
 	return cmp.Compare(b, a)
 }
