@@ -3,6 +3,7 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -46,14 +47,14 @@ type processMemoryCounters struct {
 
 // Collect gathers a complete memory [Snapshot] using Windows APIs.
 // PSI and OOM are not available on Windows and will be nil/empty.
-func collect(_ Grouping) (*Snapshot, error) {
+func collect(grouping Grouping) (*Snapshot, error) {
 	sys, err := readMemInfo()
 	if err != nil {
 		return nil, fmt.Errorf("meminfo: %w", err)
 	}
 	return &Snapshot{
 		At:            time.Now(),
-		Apps:          collectApps(sys.MemTotalKB),
+		Apps:          collectApps(sys.MemTotalKB, grouping),
 		System:        sys,
 		ProcessCommit: true,
 	}, nil
@@ -77,7 +78,7 @@ func readMemInfo() (SystemInfo, error) {
 	return info, nil
 }
 
-func collectApps(totalKB int64) []AppStat {
+func collectApps(totalKB int64, grouping Grouping) []AppStat {
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return nil
@@ -91,7 +92,7 @@ func collectApps(totalKB int64) []AppStat {
 		return nil
 	}
 
-	groups := make(map[GroupID]*appGroup)
+	processes := make(map[int]*collectedProcess)
 	for {
 		pid := pe.ProcessID
 		if pid == 0 { // System Idle Process
@@ -104,24 +105,16 @@ func collectApps(totalKB int64) []AppStat {
 		exe := windows.UTF16ToString(pe.ExeFile[:])
 		name := groupName(exe)
 		process := procMem(pid)
-		process.PID, process.Cmdline = int(pid), exe
+		process.PID, process.ParentPID, process.Cmdline = int(pid), int(pe.ParentProcessID), exe
 
-		id := executableNameID(name)
-		g, ok := groups[id]
-		if !ok {
-			g = &appGroup{}
-			groups[id] = g
-		}
-		g.rssKB += process.RSSKB
-		g.count++
-		g.children = append(g.children, process)
+		processes[int(pid)] = &collectedProcess{name: name, detail: process}
 
 		if windows.Process32Next(snap, &pe) != nil {
 			break
 		}
 	}
 
-	return buildAppStats(groups, totalKB)
+	return groupNativeProcesses(processes, totalKB, grouping)
 }
 
 // groupName strips the .exe suffix and lowercases for consistent grouping.
@@ -135,15 +128,23 @@ func groupName(exe string) string {
 
 // procMem reads working set, commit charge, and creation time for a PID.
 func procMem(pid uint32) ProcDetail {
-	h, err := windows.OpenProcess(
-		windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_VM_READ,
-		false, pid,
-	)
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_VM_READ, false, pid)
+	if err != nil {
+		h, err = windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	}
 	if err != nil {
 		return ProcDetail{}
 	}
 	defer windows.CloseHandle(h)
 
+	p := ProcDetail{}
+	var creation, exit, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(h, &creation, &exit, &kernel, &user); err == nil {
+		p.CPUAt = time.Now()
+		p.StartTime = filetimeValue(creation)
+		p.CPUTime = (float64(filetimeValue(kernel)) + float64(filetimeValue(user))) / 1e7
+	}
+	p.Executable = processImagePath(h)
 	var pmc processMemoryCounters
 	pmc.CB = uint32(unsafe.Sizeof(pmc))
 	r, _, _ := procGetProcessMemInfo.Call(
@@ -152,16 +153,25 @@ func procMem(pid uint32) ProcDetail {
 		uintptr(pmc.CB),
 	)
 	if r == 0 {
-		return ProcDetail{}
+		return p // retain identity-only parents even when memory is unreadable
 	}
-	p := ProcDetail{RSSKB: int64(pmc.WorkingSetSize / 1024), CommitKB: int64(pmc.PagefileUsage / 1024), CommitKnown: true}
-	var creation, exit, kernel, user windows.Filetime
-	if err := windows.GetProcessTimes(h, &creation, &exit, &kernel, &user); err == nil {
-		p.CPUAt = time.Now()
-		p.StartTime = filetimeValue(creation)
-		p.CPUTime = (float64(filetimeValue(kernel)) + float64(filetimeValue(user))) / 1e7
-	}
+	p.RSSKB, p.CommitKB, p.CommitKnown = int64(pmc.WorkingSetSize/1024), int64(pmc.PagefileUsage/1024), true
 	return p
+}
+
+func processImagePath(h windows.Handle) string {
+	buffer := make([]uint16, windows.MAX_PATH)
+	size := uint32(windows.MAX_PATH)
+	err := windows.QueryFullProcessImageName(h, 0, &buffer[0], &size)
+	if errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
+		buffer = make([]uint16, 32768)
+		size = 32768
+		err = windows.QueryFullProcessImageName(h, 0, &buffer[0], &size)
+	}
+	if err != nil {
+		return ""
+	}
+	return windows.UTF16ToString(buffer[:size])
 }
 
 // ProcessStartTime returns the Windows process creation time.

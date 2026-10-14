@@ -16,38 +16,35 @@ takes precedence over the positional interval, followed by the legacy `WATCH`
 environment variable and the default. Intervals must be positive whole seconds;
 invalid values and values that overflow a Go duration are rejected.
 
-On Linux the default is **application-instance grouping**. Processes whose
-observed executable family belongs to one application root share a group;
-separate roots stay separate even when they have the same name, executable,
-or workspace. Group identity uses the root PID and creation time. Inferred
-application names and workspace labels can change without changing that identity.
-For example, ChatGPT and Bitwarden using the same Electron binary have separate
-totals and termination scopes. Package paths, rather than friendly class names,
-provide application evidence. Verified ancestry and the nearest main process
-establish the running instance; a renderer's package-path alias does not create
-a new instance. Separate main processes stay separate even with identical packages.
+The default is **process-tree grouping** on Linux, macOS, Windows, FreeBSD amd64,
+and OpenBSD amd64. An application includes its observed descendants, including
+helpers running different executables. Zed's group therefore includes its
+Node-based adapters and language servers. Tree traversal stops at shells and
+operating-system session managers, keeping separate application launches apart.
 
-Choose the grouping explicitly when needed:
+Choose another grouping explicitly when needed:
 
 ```sh
-memhogs-tui --group application  # independent executable families (Linux default)
-memhogs-tui --group executable   # all collected processes using each executable
-memhogs-tui --group tree         # include different executables in an observed tree (Linux)
+memhogs-tui                     # applications and their descendants (default)
+memhogs-tui --group tree        # explicitly select the default
+memhogs-tui --group application # independent executable families (Linux)
+memhogs-tui --group executable  # all collected processes using each executable
 ```
 
-Application grouping follows observed same-executable ancestors, including across
-sandbox helpers, and respects distinct recorded sessions and application mains.
-It does not automatically include every helper running a different executable;
-tree grouping does that. Tree traversal stops at shells and session managers.
-For example, a Node-based Claude ACP adapter launched by Zed has its own
-application group, with Zed shown as its launcher. Use `--group tree` to account
-for that adapter and other descendants inside Zed's group instead. Terminating
-that tree therefore has a wider scope than terminating the adapter alone.
-Missing ancestry stays separate rather than being joined by a matching display
-name. If a root exits or becomes unreadable, its children can become separate
-groups on the next sample; no ownership is invented from past labels.
-On other supported platforms the default remains executable/process-name
-grouping; application and tree modes report their Linux requirement.
+Tree identity uses the root PID and creation time. Names and workspace labels can
+change without changing identity. Parent PIDs and creation times come from native
+process enumeration on each platform. Unknown or reused parents break the chain;
+unrelated namesakes are never joined to fill that gap. If a root exits, surviving
+children can become separate groups on the next sample.
+
+Optional Linux application-instance grouping follows verified same-executable
+families across sandbox helpers and respects distinct sessions and application
+mains. A renderer's package alias does not create a separate instance, while
+independent main processes remain separate even with identical packages. In that
+mode a Node-based adapter has its own group with Zed as its launcher. Default tree
+mode includes that adapter inside Zed's group, including in the captured scope
+when terminating the tree. The `application` mode reports its Linux requirement
+on other platforms; `tree` and `executable` are available on all supported OSes.
 
 Instance rows include their root PID and available workspace. The header shows
 the grouping mode, and termination confirmation states whether the selection is

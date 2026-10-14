@@ -11,8 +11,6 @@ import (
 	"strings"
 )
 
-const maxContextAncestors = 16
-
 func enrichProcessContexts(processes map[int]*collectedProcess, root string) {
 	sockets := unixSocketPaths(filepath.Join(root, "net", "unix"))
 	for _, process := range processes {
@@ -83,28 +81,6 @@ func packageName(path string) string {
 		directory = filepath.Dir(directory)
 	}
 	return strings.TrimSuffix(filepath.Base(directory), "-bin")
-}
-
-func processAncestors(p ProcDetail, processes map[int]*collectedProcess) []ProcessAncestor {
-	if p.StartTime == 0 {
-		return nil
-	}
-	var ancestors []ProcessAncestor
-	seen := map[int]bool{p.PID: true}
-	parent := p.ParentPID
-	descendantStart := p.StartTime
-	for len(ancestors) < maxContextAncestors {
-		candidate := processes[parent]
-		if candidate == nil || seen[parent] || candidate.detail.StartTime == 0 || candidate.detail.StartTime > descendantStart {
-			break
-		}
-		seen[parent] = true
-		a := candidate.detail
-		ancestors = append(ancestors, ProcessAncestor{PID: a.PID, StartTime: a.StartTime, Name: candidate.name, Executable: a.Executable, Cwd: a.Cwd})
-		parent = a.ParentPID
-		descendantStart = a.StartTime
-	}
-	return ancestors
 }
 
 func sameExecutable(a, b *collectedProcess) bool {
@@ -196,10 +172,6 @@ func setProcessOrigin(process *collectedProcess, processes map[int]*collectedPro
 			break
 		}
 	}
-}
-
-func contextBoundary(name string) bool {
-	return name == "systemd" || name == "gnome-shell" || strings.HasPrefix(name, "tmux")
 }
 
 func contextWrapper(name string) bool {
@@ -295,7 +267,7 @@ func initializeProcessContext(process *collectedProcess, root string, sockets ma
 	p.Context = &ProcessContext{
 		Application: application, ApplicationPID: p.PID, ApplicationStart: p.StartTime,
 		PackagePath: applicationPackage(p.Arguments()), ApplicationKey: applicationPackage(p.Arguments()),
-		ApplicationSource: source, ProjectDir: p.Cwd, ProjectSource: "cwd",
+		ApplicationSource: source, ProjectDir: p.Cwd, ProjectSource: currentDirectorySource,
 	}
 	if !orphan || !unhelpfulDirectory(p.Cwd) {
 		return
@@ -304,6 +276,6 @@ func initializeProcessContext(process *collectedProcess, root string, sockets ma
 	setResourceProject(p.Context)
 	if start, err := readStartTime(filepath.Join(root, strconv.Itoa(p.PID))); err != nil || start != p.StartTime {
 		p.Context.Resources = nil
-		p.Context.ProjectDir, p.Context.ProjectSource = p.Cwd, "cwd"
+		p.Context.ProjectDir, p.Context.ProjectSource = p.Cwd, currentDirectorySource
 	}
 }

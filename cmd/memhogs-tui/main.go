@@ -44,7 +44,7 @@ var (
 func main() {
 	showVersion := flag.Bool("v", false, "print version and exit")
 	interval := flag.Int("i", 3, "refresh interval (seconds)")
-	grouping := flag.String("group", string(collector.DefaultGrouping()), "group by application instance, executable, or tree (application/tree: Linux)")
+	grouping := flag.String("group", string(collector.DefaultGrouping()), "group by tree, executable, or application instance (application: Linux)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "memhogs %s (%s, %s)\n\n", version, commit, date)
 		fmt.Fprintf(os.Stderr, "Usage: memhogs [-i SECONDS] [--group application|executable|tree] [SECONDS]\n\n")

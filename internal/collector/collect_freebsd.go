@@ -123,14 +123,14 @@ var sizeofKinfoProc = int(unsafe.Sizeof(kinfoProc{}))
 
 // Collect gathers a complete memory [Snapshot] using FreeBSD sysctl.
 // PSI and OOM are not available on FreeBSD.
-func collect(_ Grouping) (*Snapshot, error) {
+func collect(grouping Grouping) (*Snapshot, error) {
 	sys, err := readMemInfo()
 	if err != nil {
 		return nil, fmt.Errorf("meminfo: %w", err)
 	}
 	return &Snapshot{
 		At:     time.Now(),
-		Apps:   collectApps(sys.MemTotalKB),
+		Apps:   collectApps(sys.MemTotalKB, grouping),
 		System: sys,
 	}, nil
 }
@@ -175,7 +175,7 @@ func readSwapInfo() (totalKB, usedKB int64, known bool) {
 	return total, used, totalErr == nil && usedErr == nil
 }
 
-func collectApps(totalKB int64) []AppStat {
+func collectApps(totalKB int64, grouping Grouping) []AppStat {
 	raw, err := unix.SysctlRaw("kern.proc.all")
 	cpuAt := time.Now()
 	if err != nil {
@@ -188,7 +188,7 @@ func collectApps(totalKB int64) []AppStat {
 	n := len(raw) / sizeofKinfoProc
 	pagesize := int64(unix.Getpagesize())
 
-	groups := make(map[GroupID]*appGroup)
+	processes := make(map[int]*collectedProcess)
 	for i := range n {
 		kp := (*kinfoProc)(unsafe.Pointer(&raw[i*sizeofKinfoProc : (i+1)*sizeofKinfoProc][0]))
 		pid := int(kp.Pid)
@@ -211,17 +211,9 @@ func collectApps(totalKB int64) []AppStat {
 			}
 		}
 
-		id := executableNameID(name)
-		g, ok := groups[id]
-		if !ok {
-			g = &appGroup{}
-			groups[id] = g
-		}
-		g.rssKB += rssKB
-		g.swapKB += swapKB
-		g.count++
-		g.children = append(g.children, ProcDetail{
+		process := ProcDetail{
 			PID:       pid,
+			ParentPID: int(kp.Ppid),
 			UID:       strconv.FormatUint(uint64(kp.Uid), 10),
 			StartTime: uint64(kp.Start.Sec)*1000000 + uint64(kp.Start.Usec),
 			SwapKnown: true,
@@ -230,10 +222,11 @@ func collectApps(totalKB int64) []AppStat {
 			SwapKB:    swapKB,
 			CPUTime:   float64(kp.Runtime) / 1e6,
 			CPUAt:     cpuAt,
-		})
+		}
+		processes[pid] = &collectedProcess{name: name, detail: process}
 	}
 
-	return buildAppStats(groups, totalKB)
+	return groupNativeProcesses(processes, totalKB, grouping)
 }
 
 // cmdlineName returns exe basename + first non-flag arg basename.

@@ -8,29 +8,26 @@ import (
 // Grouping selects the accounting and group-termination scope.
 type Grouping string
 
-// Application and tree grouping require Linux's observed process ancestry.
+// Grouping strategies supported by the collectors.
 const (
 	GroupApplication Grouping = "application"
 	GroupExecutable  Grouping = "executable"
 	GroupTree        Grouping = "tree"
 )
 
-// DefaultGrouping prefers independent application instances when supported.
+// DefaultGrouping includes applications and their observed descendants.
 func DefaultGrouping() Grouping {
-	if runtime.GOOS == "linux" {
-		return GroupApplication
-	}
-	return GroupExecutable
+	return GroupTree
 }
 
 // ValidateGrouping rejects unknown modes and modes without platform support.
 func ValidateGrouping(mode Grouping) error {
 	switch mode {
-	case GroupApplication, GroupTree:
+	case GroupApplication:
 		if runtime.GOOS != "linux" {
-			return fmt.Errorf("%s grouping requires Linux process ancestry; use executable", mode)
+			return fmt.Errorf("%s grouping requires Linux application attribution; use tree or executable", mode)
 		}
-	case GroupExecutable:
+	case GroupExecutable, GroupTree:
 	default:
 		return fmt.Errorf("unknown grouping %q: choose application, executable, or tree", mode)
 	}

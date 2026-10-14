@@ -16,7 +16,9 @@ jobs:
       - run: go vet ./...
       - run: go build ./...
       - run: go test -race -coverprofile="${C_FILE}" -covermode=atomic ./...
-      - run: go tool cover -func="${C_FILE}" | tail -1
+      - run: |
+          go tool cover -func="${C_FILE}" > coverage-summary.out
+          tail -1 coverage-summary.out
       - uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -30,6 +32,19 @@ jobs:
           path: ${{ env.C_FILE }}
           if-no-files-found: error
           retention-days: 14
+  native:
+    name: native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod, cache: true }
+      - run: go build ./...
+      - run: go test ./internal/collector
   lint:
     name: lint
     runs-on: ubuntu-slim

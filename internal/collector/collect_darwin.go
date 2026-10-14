@@ -67,14 +67,14 @@ type xswUsage struct {
 
 // Collect gathers a complete memory [Snapshot] using macOS sysctl and
 // proc_pidinfo APIs. PSI and OOM are not available on macOS.
-func collect(_ Grouping) (*Snapshot, error) {
+func collect(grouping Grouping) (*Snapshot, error) {
 	sys, err := readMemInfo()
 	if err != nil {
 		return nil, fmt.Errorf("meminfo: %w", err)
 	}
 	return &Snapshot{
 		At:     time.Now(),
-		Apps:   collectApps(sys.MemTotalKB),
+		Apps:   collectApps(sys.MemTotalKB, grouping),
 		System: sys,
 	}, nil
 }
@@ -119,13 +119,13 @@ func readMemInfo() (SystemInfo, error) {
 	return info, nil
 }
 
-func collectApps(totalKB int64) []AppStat {
+func collectApps(totalKB int64, grouping Grouping) []AppStat {
 	procs, err := unix.SysctlKinfoProcSlice("kern.proc.all")
 	if err != nil {
 		return nil
 	}
 
-	groups := make(map[GroupID]*appGroup)
+	processes := make(map[int]*collectedProcess)
 	for i := range procs {
 		kp := &procs[i]
 		pid := int(kp.Proc.P_pid)
@@ -134,7 +134,7 @@ func collectApps(totalKB int64) []AppStat {
 		}
 
 		process := procMem(int32(pid))
-		process.PID = pid
+		process.PID, process.ParentPID = pid, int(kp.Eproc.Ppid)
 		process.UID = fmt.Sprint(kp.Eproc.Ucred.Uid)
 		process.StartTime = uint64(kp.Proc.P_starttime.Sec)*1000000 + uint64(kp.Proc.P_starttime.Usec)
 		if !process.CPUAt.IsZero() {
@@ -147,19 +147,11 @@ func collectApps(totalKB int64) []AppStat {
 			continue
 		}
 
-		id := executableNameID(name)
-		g, ok := groups[id]
-		if !ok {
-			g = &appGroup{}
-			groups[id] = g
-		}
-		g.rssKB += process.RSSKB
-		g.count++
 		process.Cmdline = cmdlineDisplay(pid)
-		g.children = append(g.children, process)
+		processes[pid] = &collectedProcess{name: name, detail: process}
 	}
 
-	return buildAppStats(groups, totalKB)
+	return groupNativeProcesses(processes, totalKB, grouping)
 }
 
 // procMem reads RSS and CPU counters via SYS_PROC_INFO + PROC_PIDTASKINFO.

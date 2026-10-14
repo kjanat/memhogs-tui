@@ -119,14 +119,14 @@ const (
 
 // Collect gathers a complete memory [Snapshot] using OpenBSD sysctl.
 // PSI and OOM are not available on OpenBSD.
-func collect(_ Grouping) (*Snapshot, error) {
+func collect(grouping Grouping) (*Snapshot, error) {
 	sys, err := readMemInfo()
 	if err != nil {
 		return nil, fmt.Errorf("meminfo: %w", err)
 	}
 	return &Snapshot{
 		At:     time.Now(),
-		Apps:   collectApps(sys.MemTotalKB),
+		Apps:   collectApps(sys.MemTotalKB, grouping),
 		System: sys,
 	}, nil
 }
@@ -155,7 +155,7 @@ func readMemInfo() (SystemInfo, error) {
 	return info, nil
 }
 
-func collectApps(totalKB int64) []AppStat {
+func collectApps(totalKB int64, grouping Grouping) []AppStat {
 	raw, err := unix.SysctlRaw("kern.proc", kernProcAll, 0, sizeofKinfoProc, 1024)
 	cpuAt := time.Now()
 	if err != nil {
@@ -168,7 +168,7 @@ func collectApps(totalKB int64) []AppStat {
 	n := len(raw) / sizeofKinfoProc
 	pagesize := int64(unix.Getpagesize())
 
-	groups := make(map[GroupID]*appGroup)
+	processes := make(map[int]*collectedProcess)
 	for i := range n {
 		kp := (*kinfoProc)(unsafe.Pointer(&raw[i*sizeofKinfoProc : (i+1)*sizeofKinfoProc][0]))
 		pid := int(kp.Pid)
@@ -184,16 +184,9 @@ func collectApps(totalKB int64) []AppStat {
 		rssKB := int64(kp.VmRssize) * pagesize / 1024
 		name := comm
 
-		id := executableNameID(name)
-		g, ok := groups[id]
-		if !ok {
-			g = &appGroup{}
-			groups[id] = g
-		}
-		g.rssKB += rssKB
-		g.count++
 		process := ProcDetail{
 			PID:       pid,
+			ParentPID: int(kp.Ppid),
 			UID:       fmt.Sprint(kp.Uid),
 			StartTime: kp.UstartSec*1000000 + uint64(kp.UstartUsec),
 			Cmdline:   comm, // OpenBSD: kern.proc.args is restricted, use comm
@@ -203,10 +196,10 @@ func collectApps(totalKB int64) []AppStat {
 			process.CPUTime = float64(kp.UutimeSec) + float64(kp.UstimeSec) + (float64(kp.UutimeUsec)+float64(kp.UstimeUsec))/1e6
 			process.CPUAt = cpuAt
 		}
-		g.children = append(g.children, process)
+		processes[pid] = &collectedProcess{name: name, detail: process}
 	}
 
-	return buildAppStats(groups, totalKB)
+	return groupNativeProcesses(processes, totalKB, grouping)
 }
 
 // ProcessStartTime returns the OpenBSD process creation time in microseconds.

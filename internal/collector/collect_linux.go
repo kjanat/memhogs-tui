@@ -72,11 +72,6 @@ func readMemInfo() (SystemInfo, error) {
 	return info, nil
 }
 
-type collectedProcess struct {
-	name   string
-	detail ProcDetail
-}
-
 func collectApps(totalKB int64, grouping Grouping) []AppStat {
 	processes := scanProcesses("/proc")
 	enrichProcessContexts(processes, "/proc")

@@ -1,5 +1,3 @@
-//go:build linux
-
 package collector
 
 import (
@@ -7,6 +5,11 @@ import (
 	"slices"
 	"strings"
 )
+
+type collectedProcess struct {
+	name   string
+	detail ProcDetail
+}
 
 func groupProcesses(processes map[int]*collectedProcess, totalKB int64, mode Grouping) []AppStat {
 	groups := make(map[GroupID]*appGroup)
@@ -86,7 +89,7 @@ func processTreeRoot(process *collectedProcess, processes map[int]*collectedProc
 		if candidate == nil || candidate.detail.StartTime != ancestor.StartTime {
 			break
 		}
-		if treeBoundary(candidate.name) {
+		if candidate.detail.PID <= 1 || treeBoundary(candidate.name) {
 			break
 		}
 		root = candidate
@@ -95,6 +98,5 @@ func processTreeRoot(process *collectedProcess, processes map[int]*collectedProc
 }
 
 func treeBoundary(name string) bool {
-	program, _, _ := strings.Cut(name, " ")
-	return contextBoundary(name) || slices.Contains([]string{"sh", "bash", "zsh", "fish", "dash", "ksh"}, strings.TrimPrefix(program, "-"))
+	return contextBoundary(name) || slices.Contains([]string{"sh", "bash", "zsh", "fish", "dash", "ksh", "cmd", "powershell", "pwsh", "conhost", "openconsole", "windowsterminal"}, contextProgram(name))
 }
