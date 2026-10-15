@@ -211,13 +211,25 @@ func (r *projectResolver) findProjectDirectory(directory string) string {
 		return ""
 	}
 	directory = filepath.Clean(directory)
-	if directory == r.home || directory == filepath.Dir(directory) || strings.HasPrefix(directory, "/proc/") || packageCache(directory) {
-		return ""
-	}
 	if resolved, err := filepath.EvalSymlinks(directory); err == nil {
 		directory = resolved
 	}
-	return r.repositoryRoot(directory)
+	return r.rootedProjectDirectory(directory)
+}
+
+func (r *projectResolver) rootedProjectDirectory(directory string) string {
+	if directory == r.home || directory == filepath.Dir(directory) || strings.HasPrefix(directory, "/proc/") || packageCache(directory) {
+		return ""
+	}
+	if root := r.repositoryRoot(directory); root != "" {
+		return root
+	}
+	// A checked-out repository is a workspace even under Windows' Temp
+	// directory. Unidentified temporary directories remain unassigned.
+	if strings.Contains(strings.ToLower(filepath.ToSlash(directory))+"/", "/appdata/local/temp/") {
+		return ""
+	}
+	return directory
 }
 
 func (r *projectResolver) repositoryRoot(directory string) string {
@@ -226,12 +238,12 @@ func (r *projectResolver) repositoryRoot(directory string) string {
 			return current
 		}
 	}
-	return directory
+	return ""
 }
 
 func packageCache(directory string) bool {
 	path := filepath.ToSlash(directory) + "/"
-	for _, fragment := range []string{"/node_modules/", "/.npm/", "/.cache/", "/.local/share/zed/", "/.local/share/Zed/", "/Library/Caches/", "/AppData/Local/Temp/"} {
+	for _, fragment := range []string{"/node_modules/", "/.npm/", "/.cache/", "/.local/share/zed/", "/.local/share/Zed/", "/Library/Caches/"} {
 		if strings.Contains(path, fragment) {
 			return true
 		}

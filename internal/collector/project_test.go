@@ -35,7 +35,11 @@ func fixtureRepository(t *testing.T, parent, name string) string {
 	if err := os.MkdirAll(filepath.Join(dir, "src", "nested"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return dir
+	canonical, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonical
 }
 
 func TestProjectAttributionFollowsSessionWorkspaceAndDependencies(t *testing.T) {
@@ -163,5 +167,21 @@ func TestCodexDisplayOnlyArgumentsCannotInventWorkspace(t *testing.T) {
 	attributeProjectFixture(processes)
 	if processes[0].Project != nil {
 		t.Fatal("display command was interpreted as structured workspace arguments")
+	}
+}
+
+func TestTemporaryDirectoryRequiresVerifiedRepository(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "AppData", "Local", "Temp")
+	dir := fixtureRepository(t, base, "workspace")
+	r := projectResolver{directories: make(map[string]string)}
+	if got := r.projectDirectory(filepath.Join(dir, "src")); got != dir {
+		t.Fatalf("repository under Temp lost its workspace: %q", got)
+	}
+	if got := r.projectDirectory(filepath.Join(base, "unknown")); got != "" {
+		t.Fatalf("unidentified temporary directory became a workspace: %q", got)
+	}
+	cache := fixtureRepository(t, filepath.Join(base, ".npm"), "package")
+	if got := r.projectDirectory(cache); got != "" {
+		t.Fatalf("package cache became a workspace: %q", got)
 	}
 }
