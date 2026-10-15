@@ -388,6 +388,9 @@ func (m Model) collapseRow(rows []VisibleRow) Model {
 	}
 	switch r.Kind {
 	case RowGroup:
+		if r.App.GroupID.Project != "" {
+			return m.collapseProject(r, rows)
+		}
 		m.expanded[r.App.GroupID] = false
 	case RowChild:
 		return m.collapseProcessRow(r, rows)
@@ -409,6 +412,10 @@ func (m Model) sortedApps() []collector.AppStat {
 		apps = slices.DeleteFunc(apps, func(a collector.AppStat) bool { return !matchesFilter(a, q) })
 	}
 
+	return m.sortAppStats(apps)
+}
+
+func (m Model) sortAppStats(apps []collector.AppStat) []collector.AppStat {
 	switch m.sort {
 	case SortRSS:
 		slices.SortFunc(apps, func(a, b collector.AppStat) int {
@@ -477,7 +484,7 @@ func (m Model) visibleRows(apps []collector.AppStat) []VisibleRow {
 	for i, app := range apps {
 		rows = append(rows, VisibleRow{Kind: RowGroup, App: app, AppIdx: i})
 		if m.expanded[app.GroupID] {
-			rows = append(rows, m.processRows(app, i)...)
+			rows = append(rows, m.groupedProcessRows(app, i)...)
 		}
 	}
 	return rows
@@ -518,12 +525,10 @@ func (m Model) restoreSelection(selected VisibleRow, ok bool) Model {
 				return m
 			}
 		}
-		if selected.Kind == RowChild {
-			for i, row := range rows {
-				if row.Kind == RowGroup && row.App.GroupID == selected.App.GroupID {
-					m.cursor = i
-					return m
-				}
+		if selected.Kind == RowChild || selected.App.GroupID.Project != "" {
+			if i, found := selectionGroupFallback(rows, selected.App.GroupID); found {
+				m.cursor = i
+				return m
 			}
 		}
 	}
@@ -578,6 +583,9 @@ func matchesFilter(a collector.AppStat, query string) bool {
 		return true
 	}
 	for _, child := range a.Children {
+		if projectMatchesFilter(child, query) {
+			return true
+		}
 		if strings.Contains(strings.ToLower(child.Cmdline), query) || strings.Contains(strings.ToLower(child.Cwd), query) || sessionMatches(child.Session, query) || contextMatches(child.Context, query) || strings.Contains(strings.ToLower(child.Executable), query) {
 			return true
 		}

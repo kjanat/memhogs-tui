@@ -59,6 +59,7 @@ type ProcDetail struct {
 	User         string             // resolved account name; empty when unavailable
 	Session      *SessionInfo       // verified Claude session metadata; nil if unavailable
 	Context      *ProcessContext    // common application, workspace, and ancestry context
+	Project      *ProjectInfo       // project attribution for development tools and their dependencies
 	RSSKB        int64              // resident set size in KiB
 	SwapKB       int64              // swap usage in KiB
 	SwapKnown    bool               // distinguishes unavailable swap from zero
@@ -68,6 +69,14 @@ type ProcDetail struct {
 	CPUAt        time.Time          // counter observation time; zero when unavailable
 	CPUPct       float64            // interval CPU usage; 100% is one logical CPU
 	CPUKnown     bool               // true after two valid observations of this process lifetime
+}
+
+// ProjectInfo records workspace attribution without treating it as a launch directory.
+type ProjectInfo struct {
+	Directory string
+	Source    string
+	Owner     ProcessIdentity
+	Tool      string
 }
 
 // ProcessContext describes observed ownership and workspace clues. Sources are

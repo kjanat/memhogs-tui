@@ -25,7 +25,7 @@ func TestProcessSummaries(t *testing.T) {
 		{"zygote", "chrome", "GitHub9061 --type=zygote", "zygote"},
 		{"generic app", "node", "node /projects/worker.js --port 9000", "/projects/worker.js"},
 		{"empty command", "worker", "", "worker"},
-		{"not a browser", "chrome-helper-script", "python run.py", "python run.py"},
+		{"not a browser", "chrome-helper-script", "python run.py", "run.py"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got := processSummary(tt.app, collector.ProcDetail{Cmdline: tt.command})
@@ -141,7 +141,7 @@ func TestClaudeSessionSummaryAndInspector(t *testing.T) {
 	app.Children[0].Cwd = "/home/user/projects/other-worktree"
 	app.Children[0].Session = &collector.SessionInfo{ID: id, Name: "actionlint nix", ProjectDir: "/home/user/projects/actionlint", Entrypoint: "cli"}
 	summary := processSummary("claude", app.Children[0])
-	require(t, summary == "actionlint · actionlint nix [df80c404]", "wrong Claude summary: %s", summary)
+	require(t, summary == "actionlint [actionlint nix [df80c404]]", "wrong Claude summary: %s", summary)
 	m := testModel(app)
 	m.expanded[testGroupID("claude")] = true
 	m.cursor = 1
@@ -158,7 +158,7 @@ func TestClaudeSessionSummaryAndInspector(t *testing.T) {
 func TestClaudeSessionFallbackAndSafeNames(t *testing.T) {
 	p := collector.ProcDetail{Cmdline: "claude secret-startup-prompt", Cwd: "~/projects/dprint/dprint"}
 	summary := processSummary("claude", p)
-	require(t, summary == "dprint/dprint · session unavailable", "unknown session should show current directory: %s", summary)
+	require(t, summary == "dprint/dprint [session unavailable]", "unknown session should show current directory: %s", summary)
 	p.Session = &collector.SessionInfo{ID: "c66ae174-d32f-4214-bb47-e3b9fa4b641e", ProjectDir: "~/projects/dprint/dprint"}
 	summary = processSummary("claude", p)
 	require(t, strings.Contains(summary, "c66ae174") && strings.Contains(summary, "dprint/dprint"), "unnamed session lost identity: %s", summary)
@@ -197,7 +197,7 @@ func TestCommonContextAppliesWithoutApplicationSpecificRules(t *testing.T) {
 func TestObservedChromiumFamilyHandlesUnlistedBrowsers(t *testing.T) {
 	p := collector.ProcDetail{PID: 123, Args: []string{"/tmp/.mount_helium/opt/helium/helium", "http://localhost"}, Cwd: "~", Context: &collector.ProcessContext{Application: "helium", ApplicationPID: 123, ProjectDir: "~", Chromium: true}}
 	got := processSummary("helium", p)
-	require(t, got == "~ · main process", "unlisted browser main process lost role: %s", got)
+	require(t, got == "~ [main process]", "unlisted browser main process lost role: %s", got)
 }
 
 func TestContextSearchAndInspectorExposeEvidence(t *testing.T) {

@@ -12,8 +12,11 @@ func appLabel(app collector.AppStat) string {
 	if app.Root.PID != 0 {
 		label += fmt.Sprintf(" [%d]", app.Root.PID)
 		if app.Directory != "" && app.Directory != "~" && app.Directory != "/" {
-			label += " · " + projectLabel(app.Directory)
+			label += " " + projectLabel(app.Directory)
 		}
+	}
+	if app.GroupID.Project != "" {
+		label = fmt.Sprintf("%s [%d] %s", app.Name, app.Root.PID, projectLabelForGroup(app))
 	}
 	return displayText(label)
 }
@@ -21,6 +24,13 @@ func appLabel(app collector.AppStat) string {
 func killScope(row VisibleRow) string {
 	if row.Kind == RowChild {
 		return "single process"
+	}
+	if row.App.GroupID.Project != "" {
+		path := row.App.GroupID.Project
+		if path == sharedProject {
+			path = projectLabelForGroup(row.App)
+		}
+		return fmt.Sprintf("project %s within %s [PID %d]", displayText(path), displayText(row.App.Name), row.App.Root.PID)
 	}
 	switch row.App.GroupID.Mode {
 	case collector.GroupApplication:
@@ -37,9 +47,19 @@ func compareAppName(a, b collector.AppStat) int {
 }
 
 func findGroup(apps []collector.AppStat, id collector.GroupID) (collector.AppStat, bool) {
+	owner := id
+	owner.Project = ""
 	for _, app := range apps {
 		if app.GroupID == id {
 			return app, true
+		}
+		if app.GroupID != owner {
+			continue
+		}
+		for _, project := range projectGroups(app) {
+			if project.GroupID == id {
+				return project, true
+			}
 		}
 	}
 	return collector.AppStat{}, false
@@ -51,6 +71,9 @@ func (m Model) pruneExpanded() {
 	if m.snap != nil {
 		for _, app := range m.snap.Apps {
 			active[app.GroupID] = true
+			for _, project := range projectGroups(app) {
+				active[project.GroupID] = true
+			}
 			for _, child := range app.Children {
 				processes[processID(child)] = true
 			}

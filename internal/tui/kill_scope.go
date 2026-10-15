@@ -5,7 +5,7 @@ import "memhogs.kjanat.dev/internal/collector"
 // Check accounting scope before offering bulk termination. Explicit executable
 // grouping stays broad; application/tree groups require per-member evidence.
 func bulkKillProblem(row VisibleRow) string {
-	if row.Kind == RowChild || len(row.App.Children) <= 1 {
+	if row.Kind == RowChild || (len(row.App.Children) <= 1 && row.App.GroupID.Project == "") {
 		return ""
 	}
 	id := row.App.GroupID
@@ -16,7 +16,7 @@ func bulkKillProblem(row VisibleRow) string {
 		return "group root identity unavailable; select an individual process"
 	}
 	for _, process := range row.App.Children {
-		if !belongsToGroup(process, id) {
+		if !belongsToGroup(process, id) || !projectMemberMatches(process, id) {
 			return "group ownership is ambiguous; select an individual process"
 		}
 	}

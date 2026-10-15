@@ -16,12 +16,14 @@ type GroupID struct {
 	Mode       Grouping
 	Root       ProcessIdentity
 	Executable ExecutableIdentity
+	Project    string // optional project subset within this owner; empty for the whole group
 }
 
 // Compare orders identities deterministically without serializing display text.
 func (id GroupID) Compare(other GroupID) int {
 	return cmp.Or(cmp.Compare(id.Mode, other.Mode),
 		cmp.Compare(id.Root.PID, other.Root.PID), cmp.Compare(id.Root.StartTime, other.Root.StartTime),
+		cmp.Compare(id.Project, other.Project),
 		cmp.Compare(id.Executable.Path, other.Executable.Path),
 		cmp.Compare(id.Executable.Device, other.Executable.Device), cmp.Compare(id.Executable.Inode, other.Executable.Inode))
 }

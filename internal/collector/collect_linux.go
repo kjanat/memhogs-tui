@@ -94,7 +94,7 @@ func scanProcesses(root string) map[int]*collectedProcess {
 			continue
 		}
 		process.PID = pid
-		if name == "claude" {
+		if name == toolClaude {
 			process.Session = claudeSession(pid, process.StartTime)
 		}
 		processes[pid] = &collectedProcess{name: name, detail: process}

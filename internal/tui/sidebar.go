@@ -56,6 +56,9 @@ func selectedProcess(row VisibleRow) (collector.ProcDetail, bool) {
 }
 
 func (m Model) viewProcessContext(row VisibleRow, width int) string {
+	if row.Kind == RowGroup && row.App.GroupID.Project != "" {
+		return m.projectContext(row.App, width)
+	}
 	process, ok := selectedProcess(row)
 	header := sectionDivStyle.Width(width).Render("Process context")
 	if !ok {
@@ -127,6 +130,9 @@ func processAccount(p collector.ProcDetail) string {
 
 func processDirectories(p collector.ProcDetail, width int) []string {
 	var parts []string
+	if p.Project != nil {
+		parts = append(parts, sidebarField("Project", p.Project.Directory, width, 3))
+	}
 	if p.Session != nil && p.Session.ProjectDir != "" {
 		parts = append(parts, sidebarField("Launch dir (session)", p.Session.ProjectDir, width, 3))
 		if p.Cwd != p.Session.ProjectDir {

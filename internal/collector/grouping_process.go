@@ -12,6 +12,7 @@ type collectedProcess struct {
 }
 
 func groupProcesses(processes map[int]*collectedProcess, totalKB int64, mode Grouping) []AppStat {
+	attributeProjects(processes)
 	groups := make(map[GroupID]*appGroup)
 	for _, process := range processes {
 		if !memoryConsumer(process.detail) {

@@ -53,6 +53,9 @@ func processContextLines(p collector.ProcDetail) []string {
 		fmt.Sprintf("Parent PID: %d", p.ParentPID), "Executable: " + displayText(p.Executable),
 		"Account owner: " + displayText(processAccount(p)),
 	}
+	if p.Project != nil {
+		lines = append(lines, "Project: "+displayText(p.Project.Directory), "Project source: "+displayText(p.Project.Source), fmt.Sprintf("Project owner PID: %d", p.Project.Owner.PID))
+	}
 	if ctx := p.Context; ctx != nil {
 		lines = append(lines, fmt.Sprintf("Application: %s [PID %d]", displayText(ctx.Application), ctx.ApplicationPID),
 			"Application source: "+displayText(ctx.ApplicationSource),

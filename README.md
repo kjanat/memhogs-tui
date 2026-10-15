@@ -155,6 +155,12 @@ network service. A main process is recognized from those flags in its observed
 process family, including browsers absent from any application-name list. These
 roles do not identify individual browser tabs or sites. Generic command summaries
 keep leading actions and leave complete launch arguments in the `c` inspector.
+Python rows show the script entry point or `python -m` module instead of virtualenv
+and uv cache paths, for example `serena start-mcp-server` or `blender-mcp`.
+Process labels use compact `project [tool(via launcher)]` notation, for example
+`memhogs-tui [blender-mcp(via uv)]`.
+Narrow table columns put the Python tool before workspace and launcher context
+so the tool name survives truncation.
 Terminals are shown when readable. Processes with neither resident nor swapped
 memory, including zombies, remain in Linux's ancestry graph but contribute no
 memory rows or captured kill targets. Their metadata can still identify an
@@ -169,6 +175,24 @@ they use more memory or CPU. Each process branch can fold independently with
 header shows the aggregate. Process rows, including folded branches, retain
 individual-PID inspection and termination. Executable grouping keeps its flat
 ranking across instances.
+
+Claude, Codex, and Zed trees add expandable **project sections** with their own
+RSS, swap or commit, process-count, and CPU totals. Expand an application, then a
+project to see its sessions, language servers, MCP servers, and other dependencies
+in their process hierarchy. Project identity uses the full directory inside the
+owning process instance; identical repository names and independent launches stay
+separate. Executable grouping retains its flat ranking.
+
+Project attribution prefers verified session directories, structured absolute
+Codex workspace arguments, then observed workspace/current directories. Git
+subdirectories resolve to their repository or worktree root. Dependencies inherit
+the workspace of a verified Claude or Codex ancestor; Zed's other tools use their
+own workspace evidence. Zed's editor processes and processes without sufficient
+evidence stay under **Shared / unassigned**, rather than being charged to an
+arbitrary open project. Package caches do not become projects. The sidebar shows
+the full project path and evidence; `c` includes the project owner and process
+context. Selecting a project for termination captures only its displayed member
+PIDs, with the project path and owning application disclosed in the confirmation.
 
 On Linux, Claude rows put the recorded session start directory first, followed
 by the current session name and a short session UUID, when matching metadata

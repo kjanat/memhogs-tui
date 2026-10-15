@@ -12,45 +12,63 @@ import (
 // processSummary always combines common process context with a concise role.
 // Application metadata enriches the role without replacing workspace or ownership.
 func processSummary(app string, process collector.ProcDetail) string {
-	parts := processIdentity(app, process)
-	parts = append(parts, processRole(app, process))
+	return processSummaryContext(processIdentity(app, process), processRole(app, process), process, false)
+}
+
+func processSummaryContext(identity []string, role string, process collector.ProcDetail, roleFirst bool) string {
 	if ctx := process.Context; ctx != nil && ctx.Origin != "" && !ctx.Chromium {
-		parts = append(parts, "via "+ctx.Origin)
+		role += "(via " + ctx.Origin + ")"
+	}
+	summary := role
+	if owner := strings.Join(identity, " "); owner != "" {
+		if roleFirst {
+			summary = "[" + role + "] " + owner
+		} else {
+			summary = owner + " [" + role + "]"
+		}
 	}
 	if process.Terminal != "" {
-		parts = append(parts, process.Terminal)
+		summary += " " + process.Terminal
 	}
-	return displayText(strings.Join(parts, " · "))
+	return displayText(summary)
 }
 
 func processIdentity(app string, p collector.ProcDetail) []string {
 	var parts []string
+	if ctx := p.Context; ctx != nil && ctx.Application != "" && !strings.EqualFold(ctx.Application, app) && !pythonRuntimeLabel(ctx.Application, p.Arguments()) {
+		parts = append(parts, ctx.Application)
+	}
+	if directory := processDirectory(p); directory != "" {
+		parts = append(parts, projectLabel(directory))
+	}
+	return parts
+}
+
+func processDirectory(p collector.ProcDetail) string {
 	directory := p.Cwd
-	if ctx := p.Context; ctx != nil {
-		if ctx.Application != "" && !strings.EqualFold(ctx.Application, app) {
-			parts = append(parts, ctx.Application)
-		}
-		if ctx.ProjectDir != "" {
-			directory = ctx.ProjectDir
-		}
+	if ctx := p.Context; ctx != nil && ctx.ProjectDir != "" {
+		directory = ctx.ProjectDir
+	}
+	if p.Project != nil && p.Project.Directory != "" {
+		directory = p.Project.Directory
 	}
 	if p.Session != nil && p.Session.ProjectDir != "" {
 		directory = p.Session.ProjectDir
 	}
-	if directory != "" {
-		parts = append(parts, projectLabel(directory))
-	}
-	return parts
+	return directory
 }
 
 func processRole(app string, p collector.ProcDetail) string {
 	if session := p.Session; session != nil {
 		return sessionLabel(session)
 	}
+	args := p.Arguments()
+	if role := pythonCommand(args); role != "" {
+		return role
+	}
 	if app == "claude" {
 		return "session unavailable"
 	}
-	args := p.Arguments()
 	if role := chromiumRole(args); role != "" {
 		return role
 	}

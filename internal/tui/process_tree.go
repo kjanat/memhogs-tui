@@ -18,6 +18,12 @@ func processID(p collector.ProcDetail) collector.ProcessIdentity {
 }
 
 func groupExpandable(app collector.AppStat) bool {
+	if app.GroupID.Project != "" {
+		return len(app.Children) > 0
+	}
+	if app.GroupID.Mode != collector.GroupExecutable && len(app.Children) == 1 && app.Children[0].Project != nil {
+		return true
+	}
 	return len(app.Children) > 1 || (len(app.Children) == 1 && app.Root.PID != 0 && processID(app.Children[0]) != app.Root)
 }
 
@@ -167,7 +173,7 @@ func processTreeLabel(row VisibleRow, width int) string {
 	if n := ansi.StringWidth(prefix); n > maxPrefix {
 		prefix = "…" + ansi.Cut(prefix, n-maxPrefix+1, n)
 	}
-	label := processSummary(row.App.Name, row.Child)
+	label := tableProcessSummary(row.App.Name, row.Child, width-ansi.StringWidth(prefix))
 	if row.TreePrefix != "" && processID(row.Child) == row.App.Root {
 		label += " (self)"
 	}

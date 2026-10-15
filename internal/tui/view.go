@@ -79,7 +79,11 @@ func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 		selected := i == m.cursor
 		switch r.Kind {
 		case RowGroup:
-			b.WriteString(m.renderGroupRow(r.App, nameW, barW, maxRSS, selected))
+			if r.App.GroupID.Project != "" {
+				b.WriteString(m.renderProjectRow(r, nameW, barW, maxRSS, selected))
+			} else {
+				b.WriteString(m.renderGroupRow(r.App, nameW, barW, maxRSS, selected))
+			}
 		case RowChild:
 			b.WriteString(m.renderChildRow(r, nameW, selected))
 		}
@@ -123,6 +127,9 @@ func tableLayout(rows []VisibleRow, w int) (nameW, barW int, maxRSS int64) {
 	nameW = 16
 	for _, r := range rows {
 		label := appLabel(r.App)
+		if r.Kind == RowGroup && r.App.GroupID.Project != "" {
+			label = r.TreePrefix + projectLabelForGroup(r.App)
+		}
 		if r.Kind == RowChild {
 			label = processTreePrefix(r) + processSummary(r.App.Name, r.Child)
 		}
@@ -149,8 +156,21 @@ func (m Model) renderGroupRow(a collector.AppStat, nameW, barW int, maxRSS int64
 		}
 	}
 
-	row := fmt.Sprintf("%s%s %4dMiB %7s %9d %5.1f%% %7s",
-		pfx, name,
+	return m.renderAggregateRow(a, pfx+name, barW, maxRSS, selected)
+}
+
+func (m Model) renderProjectRow(r VisibleRow, nameW, barW int, maxRSS int64, selected bool) string {
+	marker := "▸ "
+	if m.expanded[r.App.GroupID] {
+		marker = "▾ "
+	}
+	name := fitText(r.TreePrefix+marker+projectLabelForGroup(r.App), nameW+2)
+	return m.renderAggregateRow(r.App, name, barW, maxRSS, selected)
+}
+
+func (m Model) renderAggregateRow(a collector.AppStat, name string, barW int, maxRSS int64, selected bool) string {
+	row := fmt.Sprintf("%s %4dMiB %7s %9d %5.1f%% %7s",
+		name,
 		a.RSSKB/1024, m.appSecondaryText(a),
 		a.ProcCount, a.MemPct, cpuText(a.CPUPct, a.CPUKnown))
 
