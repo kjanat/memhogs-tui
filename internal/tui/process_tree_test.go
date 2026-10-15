@@ -65,7 +65,7 @@ func TestProcessTreeRendersIndentationAndAlignedCounters(t *testing.T) {
 		text := ansi.Strip(m.viewTable(rows, width, 20))
 		lines := strings.Split(text, "\n")
 		require(t, strings.Contains(lines[5], "├─ ▾ ") && strings.Contains(lines[6], "│  └─ ▾ "), "nested branches not drawn:\n%s", text)
-		column := strings.Index(lines[1], "CPU%") + 4
+		column := ansi.StringWidth(lines[1][:strings.Index(lines[1], "CPU%")+4])
 		for i, row := range rows[1:] {
 			line := lines[i+4]
 			cpu := cpuText(row.Child.CPUPct, row.Child.CPUKnown)

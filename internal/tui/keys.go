@@ -3,25 +3,26 @@ package tui
 import "charm.land/bubbles/v2/key"
 
 type keyMap struct {
-	Up        key.Binding
-	Down      key.Binding
-	PageUp    key.Binding
-	PageDown  key.Binding
-	Home      key.Binding
-	End       key.Binding
-	Toggle    key.Binding
-	Expand    key.Binding
-	Collapse  key.Binding
-	Sort      key.Binding
-	Filter    key.Binding
-	Pause     key.Binding
-	Kill      key.Binding
-	ForceKill key.Binding
-	Help      key.Binding
-	Command   key.Binding
-	Quit      key.Binding
-	Confirm   key.Binding
-	Cancel    key.Binding
+	Up           key.Binding
+	Down         key.Binding
+	PageUp       key.Binding
+	PageDown     key.Binding
+	Home         key.Binding
+	End          key.Binding
+	Toggle       key.Binding
+	Expand       key.Binding
+	Collapse     key.Binding
+	Sort         key.Binding
+	Filter       key.Binding
+	Pause        key.Binding
+	ResetColumns key.Binding
+	Kill         key.Binding
+	ForceKill    key.Binding
+	Help         key.Binding
+	Command      key.Binding
+	Quit         key.Binding
+	Confirm      key.Binding
+	Cancel       key.Binding
 }
 
 var keys = keyMap{
@@ -61,6 +62,7 @@ var keys = keyMap{
 		key.WithKeys("p"),
 		key.WithHelp("p", "pause"),
 	),
+	ResetColumns: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reset column widths")),
 	Kill: key.NewBinding(
 		key.WithKeys("x"),
 		key.WithHelp("x", "kill"),

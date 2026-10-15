@@ -73,6 +73,8 @@ type Model struct {
 	height      int
 	sideFocused bool
 	sideOffset  int
+	columns     columnWidths
+	columnDrag  columnDrag
 
 	interval   time.Duration
 	grouping   collector.Grouping
@@ -165,6 +167,7 @@ func doKill(row VisibleRow, force bool, signal func(collector.ProcDetail, bool) 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.columnDrag = columnDrag{}
 		m.width = msg.Width
 		m.height = msg.Height
 		m.command.SetWidth(max(m.width-4, 1))
@@ -179,12 +182,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.e
 
 	case tick:
-		cmds := []tea.Cmd{doTick(m.interval)}
-		if !m.paused && !m.collecting {
-			m.collecting = true
-			cmds = append(cmds, doCollect(m.grouping))
-		}
-		return m, tea.Batch(cmds...)
+		return m.handleTick()
 
 	case clearStatus:
 		m.status = ""
@@ -194,13 +192,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, doClearStatus()
 
 	case tea.KeyPressMsg:
+		m.columnDrag = columnDrag{}
 		before, selected := m.currentRow(m.visibleRows(m.sortedApps()))
 		next, cmd := m.handleKey(msg)
 		m = next.(Model)
 		return m.resetSideSelection(before, selected).adjustViewport(), cmd
+	case tea.MouseMsg:
+		return m.handleMouse(msg).adjustViewport(), nil
 	}
 
 	return m.adjustViewport(), nil
+}
+
+func (m Model) handleTick() (tea.Model, tea.Cmd) {
+	cmds := []tea.Cmd{doTick(m.interval)}
+	if !m.paused && !m.collecting {
+		m.collecting = true
+		cmds = append(cmds, doCollect(m.grouping))
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // applySnapshot stores a fresh snapshot, retaining the previous one for deltas,
@@ -335,6 +345,8 @@ func (m Model) handleNavKey(msg tea.KeyPressMsg) Model {
 		m = m.foldGroup(rows, true)
 	case key.Matches(msg, keys.Collapse):
 		m = m.collapseRow(rows)
+	case key.Matches(msg, keys.ResetColumns):
+		m = m.resetColumns()
 	}
 	return m
 }

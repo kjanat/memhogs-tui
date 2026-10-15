@@ -119,7 +119,14 @@ current process. Collection errors remain visible and are retried on subsequent
 refreshes.
 
 Expanded rows align each process's RSS, swap or commit, PID, memory percentage, and CPU percentage
-with the group columns. On Linux, every row uses common context: its working
+with the group columns. Drag a `│` boundary in the table header to adjust that
+column's width. Widths stay fixed through sorting and refreshes for the current
+run; shrinking the terminal compresses them, and enlarging it restores your
+chosen widths. Right-click the header or press `r` to return to automatic sizing.
+Click a row to select it, and use the mouse wheel over the table or sidebar to
+scroll that area.
+
+On Linux, every row uses common context: its working
 directory, executable, parent chain, and concrete application when a package
 argument identifies a shared runtime's owner. This distinguishes Electron apps
 and shows which editor or CLI launched a helper. Search matches this context too.

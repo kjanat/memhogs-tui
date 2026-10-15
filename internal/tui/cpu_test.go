@@ -74,7 +74,7 @@ func TestCPUColumnVisibleAndAligned(t *testing.T) {
 	rows := m.visibleRows(m.sortedApps())
 	for _, width := range []int{61, 80, 120} {
 		lines := strings.Split(ansi.Strip(m.viewTable(rows, width, 8)), "\n")
-		column := strings.Index(lines[1], "CPU%") + len("CPU%")
+		column := ansi.StringWidth(lines[1][:strings.Index(lines[1], "CPU%")+len("CPU%")])
 		if column < 4 || !strings.Contains(lines[3], "150.0%") || !strings.Contains(lines[4], "150.0%") || !strings.Contains(lines[5], "n/a") {
 			t.Fatalf("CPU values lost at width %d:\n%s", width, strings.Join(lines, "\n"))
 		}

@@ -52,21 +52,20 @@ func (m Model) View() tea.View {
 
 	v := tea.NewView(out)
 	v.AltScreen = true
+	if m.mouseEnabled() {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	return v
 }
 
-// tableFixedW is the non-name, non-bar column budget:
-// prefix(2) + rss(8) + swap(8) + procs/PID(10) + mem%(7) + cpu%(8) + gap(1).
-const tableFixedW = 2 + 8 + 8 + 10 + 7 + 8 + 1
-
 func (m Model) viewTable(rows []VisibleRow, w, h int) string {
-	nameW, barW, maxRSS := tableLayout(rows, w)
+	layout := m.tableLayout(rows, w)
 
 	var b strings.Builder
 	b.WriteString(titleStyle.Render(m.tableTitle()))
 	b.WriteByte('\n')
 
-	hdr := fmt.Sprintf("  %-*s %7s %7s %9s %6s %7s", nameW, "NAME / ROLE", "RSS", strings.ToUpper(m.secondaryLabel()), "PROCS/PID", "MEM%", "CPU%")
+	hdr := layout.render(columnCells{"  NAME / ROLE", "RSS", strings.ToUpper(m.secondaryLabel()), "PROCS/PID", "MEM%", "CPU%"}, "│") + "│"
 	b.WriteString(headerStyle.Render(hdr))
 	b.WriteByte('\n')
 	b.WriteString(mutedStyle.Render(strings.Repeat("─", w)))
@@ -80,12 +79,12 @@ func (m Model) viewTable(rows []VisibleRow, w, h int) string {
 		switch r.Kind {
 		case RowGroup:
 			if r.App.GroupID.Project != "" {
-				b.WriteString(m.renderProjectRow(r, nameW, barW, maxRSS, selected))
+				b.WriteString(m.renderProjectRow(r, layout, selected))
 			} else {
-				b.WriteString(m.renderGroupRow(r.App, nameW, barW, maxRSS, selected))
+				b.WriteString(m.renderGroupRow(r.App, layout, selected))
 			}
 		case RowChild:
-			b.WriteString(m.renderChildRow(r, nameW, selected))
+			b.WriteString(m.renderChildRow(r, layout, selected))
 		}
 		b.WriteByte('\n')
 	}
@@ -121,33 +120,9 @@ func (m Model) tableTitle() string {
 	return title
 }
 
-// tableLayout computes the name-column width, RSS-bar width, and the largest
-// group RSS used to scale the bars.
-func tableLayout(rows []VisibleRow, w int) (nameW, barW int, maxRSS int64) {
-	nameW = 16
-	for _, r := range rows {
-		label := appLabel(r.App)
-		if r.Kind == RowGroup && r.App.GroupID.Project != "" {
-			label = r.TreePrefix + projectLabelForGroup(r.App)
-		}
-		if r.Kind == RowChild {
-			label = processTreePrefix(r) + processSummary(r.App.Name, r.Child)
-		}
-		nameW = max(nameW, lipgloss.Width(displayText(label)))
-		if r.Kind == RowGroup && r.App.RSSKB > maxRSS {
-			maxRSS = r.App.RSSKB
-		}
-	}
-	nameW = min(nameW, max((w-tableFixedW)/2, 16))
-	barW = min(max(w-nameW-tableFixedW, 0), w/3)
-	return nameW, barW, maxRSS
-}
-
 // renderGroupRow formats one aggregated application row, including the fold
 // indicator and the RSS bar scaled against maxRSS.
-func (m Model) renderGroupRow(a collector.AppStat, nameW, barW int, maxRSS int64, selected bool) string {
-	name := fitText(appLabel(a), nameW)
-
+func (m Model) renderGroupRow(a collector.AppStat, layout tableGeometry, selected bool) string {
 	pfx := "  "
 	if groupExpandable(a) {
 		pfx = "▸ "
@@ -156,26 +131,25 @@ func (m Model) renderGroupRow(a collector.AppStat, nameW, barW int, maxRSS int64
 		}
 	}
 
-	return m.renderAggregateRow(a, pfx+name, barW, maxRSS, selected)
+	return m.renderAggregateRow(a, pfx+appLabel(a), layout, selected)
 }
 
-func (m Model) renderProjectRow(r VisibleRow, nameW, barW int, maxRSS int64, selected bool) string {
+func (m Model) renderProjectRow(r VisibleRow, layout tableGeometry, selected bool) string {
 	marker := "▸ "
 	if m.expanded[r.App.GroupID] {
 		marker = "▾ "
 	}
-	name := fitText(r.TreePrefix+marker+projectLabelForGroup(r.App), nameW+2)
-	return m.renderAggregateRow(r.App, name, barW, maxRSS, selected)
+	name := r.TreePrefix + marker + projectLabelForGroup(r.App)
+	return m.renderAggregateRow(r.App, name, layout, selected)
 }
 
-func (m Model) renderAggregateRow(a collector.AppStat, name string, barW int, maxRSS int64, selected bool) string {
-	row := fmt.Sprintf("%s %4dMiB %7s %9d %5.1f%% %7s",
-		name,
-		a.RSSKB/1024, m.appSecondaryText(a),
-		a.ProcCount, a.MemPct, cpuText(a.CPUPct, a.CPUKnown))
+func (m Model) renderAggregateRow(a collector.AppStat, name string, layout tableGeometry, selected bool) string {
+	cells := m.rowCells(VisibleRow{App: a})
+	cells[columnName] = name
+	row := layout.render(cells, " ")
 
-	if barW > 0 && maxRSS > 0 {
-		bLen := int(float64(a.RSSKB) / float64(maxRSS) * float64(barW))
+	if layout.bar > 0 && layout.maxRSS > 0 {
+		bLen := int(float64(a.RSSKB) / float64(layout.maxRSS) * float64(layout.bar))
 		if a.RSSKB > 0 && bLen < 1 {
 			bLen = 1
 		}
@@ -191,15 +165,10 @@ func (m Model) renderAggregateRow(a collector.AppStat, name string, barW int, ma
 
 // renderChildRow aligns the process role, memory counters, and PID with
 // group columns. Full launch arguments remain accessible with c.
-func (m Model) renderChildRow(r VisibleRow, nameW int, selected bool) string {
-	child := r.Child
-	var memPct float64
-	if total := m.snap.System.MemTotalKB; total > 0 {
-		memPct = float64(child.RSSKB) / float64(total) * 100
-	}
-	row := fmt.Sprintf("%s %4dMiB %7s %9d %5.1f%% %7s",
-		processTreeLabel(r, nameW+2), child.RSSKB/1024,
-		m.childSecondaryText(child), child.PID, memPct, cpuText(child.CPUPct, child.CPUKnown))
+func (m Model) renderChildRow(r VisibleRow, layout tableGeometry, selected bool) string {
+	cells := m.rowCells(r)
+	cells[columnName] = processTreeLabel(r, layout.widths[columnName])
+	row := layout.render(cells, " ")
 	if selected {
 		return selectedStyle.Render(row)
 	}
@@ -468,10 +437,10 @@ func (m Model) viewHelpModal() string {
 		"  " + helpKeyStyle.Render("c") + "    Inspect full command(s)\n" +
 		"  " + helpKeyStyle.Render("x") + "    " + killSignalName(false) + " selected\n" +
 		"  " + helpKeyStyle.Render("X") + "    " + killSignalName(true) + " selected\n\n" +
-		sectionStyle.Render("Display") + "\n" +
+		sectionStyle.Render("Display (drag header │; right-click resets)") + "\n" +
 		"  " + helpKeyStyle.Render("s") + "    Cycle sort mode\n" +
 		"  " + helpKeyStyle.Render("/") + "    Filter name/command\n" +
-		"  " + helpKeyStyle.Render("p") + "    Pause/resume refresh\n\n" +
+		"  " + helpKeyStyle.Render("p") + "    Pause/resume    " + helpKeyStyle.Render("r") + "  Reset widths\n\n" +
 		"  " + helpKeyStyle.Render("?") + "    Toggle help\n" +
 		"  " + helpKeyStyle.Render("q") + "    Quit"
 
